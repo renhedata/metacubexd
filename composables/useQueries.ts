@@ -27,7 +27,7 @@ export function useProxiesQuery() {
     queryFn: async () => {
       const request = createRequest()
       const { proxies } = await request
-        .get('proxies')
+        .get('proxies', { timeout: false })
         .json<{ proxies: Record<string, Proxy> }>()
       return proxies
     },
@@ -40,7 +40,7 @@ export function useProxyProvidersQuery() {
     queryFn: async () => {
       const request = createRequest()
       const { providers } = await request
-        .get('providers/proxies')
+        .get('providers/proxies', { timeout: false })
         .json<{ providers: Record<string, ProxyProvider> }>()
       return providers
     },
@@ -167,7 +167,7 @@ export function useRulesQuery() {
     queryFn: async () => {
       const request = createRequest()
       const { rules } = await request
-        .get('rules')
+        .get('rules', { timeout: false })
         .json<{ rules: Record<string, Rule> }>()
       return Object.values(rules)
     },
@@ -180,7 +180,7 @@ export function useRuleProvidersQuery() {
     queryFn: async () => {
       const request = createRequest()
       const { providers } = await request
-        .get('providers/rules')
+        .get('providers/rules', { timeout: false })
         .json<{ providers: Record<string, RuleProvider> }>()
       return Object.values(providers)
     },

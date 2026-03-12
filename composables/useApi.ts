@@ -174,14 +174,16 @@ export function fetchProxyProvidersAPI() {
   const request = useRequest()
 
   return request
-    .get('providers/proxies')
+    .get('providers/proxies', { timeout: false })
     .json<{ providers: Record<string, ProxyProvider> }>()
 }
 
 export function fetchProxiesAPI() {
   const request = useRequest()
 
-  return request.get('proxies').json<{ proxies: Record<string, Proxy> }>()
+  return request
+    .get('proxies', { timeout: false })
+    .json<{ proxies: Record<string, Proxy> }>()
 }
 
 export function updateProxyProviderAPI(providerName: string) {
@@ -246,14 +248,16 @@ export function proxyGroupLatencyTestAPI(
 export function fetchRulesAPI() {
   const request = useRequest()
 
-  return request.get('rules').json<{ rules: Record<string, Rule> }>()
+  return request
+    .get('rules', { timeout: false })
+    .json<{ rules: Record<string, Rule> }>()
 }
 
 export function fetchRuleProvidersAPI() {
   const request = useRequest()
 
   return request
-    .get('providers/rules')
+    .get('providers/rules', { timeout: false })
     .json<{ providers: Record<string, RuleProvider> }>()
 }
 
