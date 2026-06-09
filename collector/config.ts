@@ -16,16 +16,18 @@ export function toWsURL(httpURL: string): string {
 export function loadConfig(
   env: Record<string, string | undefined> = process.env,
 ): CollectorConfig {
-  const mihomoApiURL = env.MIHOMO_API_URL
-  if (!mihomoApiURL) {
-    throw new Error('MIHOMO_API_URL is required')
-  }
+  // MIHOMO_API_URL is optional: the daemon can be pointed at a backend at
+  // runtime via POST /api/connect (the dashboard pushes its current endpoint),
+  // so it may start with no target configured.
+  const mihomoApiURL = env.MIHOMO_API_URL ?? ''
 
-  let mihomoWsURL: string
-  try {
-    mihomoWsURL = toWsURL(mihomoApiURL)
-  } catch {
-    throw new Error(`MIHOMO_API_URL is not a valid URL: ${mihomoApiURL}`)
+  let mihomoWsURL = ''
+  if (mihomoApiURL) {
+    try {
+      mihomoWsURL = toWsURL(mihomoApiURL)
+    } catch {
+      throw new Error(`MIHOMO_API_URL is not a valid URL: ${mihomoApiURL}`)
+    }
   }
 
   return {

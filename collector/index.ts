@@ -1,6 +1,6 @@
+import type { MihomoClient } from './mihomo'
 import type { ConnectionsMessage } from './types'
-import { loadConfig } from './config'
-// collector/index.ts
+import { loadConfig, toWsURL } from './config'
 import { connectMihomo } from './mihomo'
 import { createServer } from './server'
 import { createStore } from './store'
@@ -13,13 +13,36 @@ function main(): void {
   const store = createStore(config.dbPath)
   const tracker = createTracker()
   const startedAt = Date.now()
+  const log = (m: string): void => console.log(`[collector] ${m}`)
 
-  const client = connectMihomo({
-    wsURL: config.mihomoWsURL,
-    secret: config.mihomoSecret,
-    onMessage: (msg) => tracker.processMessage(msg as ConnectionsMessage),
-    log: (m) => console.log(`[collector] ${m}`),
-  })
+  // The mihomo connection is reconfigurable at runtime: the dashboard pushes its
+  // current endpoint via POST /api/connect, so the daemon needs no manual mihomo
+  // env config. `currentTarget` dedupes redundant reconnects.
+  let client: MihomoClient | null = null
+  let currentTarget = ''
+
+  const connectTo = (apiURL: string, secret: string): void => {
+    let wsURL = ''
+    try {
+      wsURL = toWsURL(apiURL)
+    } catch {
+      log(`ignoring invalid mihomo url: ${apiURL}`)
+      return
+    }
+    const target = `${wsURL}\x1F${secret}`
+    if (client && target === currentTarget) return
+    currentTarget = target
+    client?.close()
+    client = connectMihomo({
+      wsURL,
+      secret,
+      onMessage: (msg) => tracker.processMessage(msg as ConnectionsMessage),
+      log,
+    })
+    log(`connecting to mihomo ${wsURL}`)
+  }
+
+  if (config.mihomoApiURL) connectTo(config.mihomoApiURL, config.mihomoSecret)
 
   const flush = (): void => {
     const logs = tracker.drainBuffer()
@@ -37,17 +60,16 @@ function main(): void {
     token: config.token,
     allowedOrigin: config.allowedOrigin,
     startedAt,
+    onConnect: connectTo,
   })
   server.listen(config.port, () => {
-    console.log(
-      `[collector] listening on :${config.port} db=${config.dbPath} mihomo=${config.mihomoWsURL}`,
-    )
+    log(`listening on :${config.port} db=${config.dbPath}`)
   })
 
   const shutdown = (): void => {
     clearInterval(flushTimer)
     flush()
-    client.close()
+    client?.close()
     server.close()
     store.close()
     process.exit(0)

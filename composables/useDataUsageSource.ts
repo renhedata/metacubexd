@@ -6,6 +6,7 @@ import { db } from '~/utils/db'
 export interface DataUsageSource {
   query: (start: number, end: number) => Promise<DataUsageLog[]>
   clearCollectorData: () => Promise<void>
+  configureCollector: () => Promise<void>
 }
 
 const dataUsageLogSchema = z.object({
@@ -23,6 +24,7 @@ const dataUsageLogsSchema = z.array(dataUsageLogSchema)
 
 export function useDataUsageSource(): DataUsageSource {
   const configStore = useConfigStore()
+  const endpointStore = useEndpointStore()
 
   const authHeaders = (): Record<string, string> =>
     configStore.collectorToken
@@ -70,5 +72,23 @@ export function useDataUsageSource(): DataUsageSource {
     }
   }
 
-  return { query, clearCollectorData }
+  // Push the dashboard's current mihomo endpoint to the collector so it connects
+  // to the same backend without the user entering the mihomo URL/secret manually.
+  const configureCollector = async (): Promise<void> => {
+    const endpoint = endpointStore.currentEndpoint
+    if (!endpoint) return
+    const res = await fetch(`${collectorBase()}/api/connect`, {
+      method: 'POST',
+      headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: endpoint.url,
+        secret: endpoint.secret ?? '',
+      }),
+    })
+    if (!res.ok) {
+      throw new Error(`Collector configure failed with status ${res.status}`)
+    }
+  }
+
+  return { query, clearCollectorData, configureCollector }
 }

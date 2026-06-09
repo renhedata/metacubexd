@@ -7,16 +7,29 @@ export interface ServerOptions {
   token: string
   allowedOrigin: string
   startedAt: number
+  // Called when the dashboard pushes its current mihomo endpoint so the daemon
+  // can (re)point itself without manual env configuration.
+  onConnect?: (apiURL: string, secret: string) => void
 }
 
 export function createServer(opts: ServerOptions): Server {
-  const { store, token, allowedOrigin, startedAt } = opts
+  const { store, token, allowedOrigin, startedAt, onConnect } = opts
 
   const setCors = (res: ServerResponse): void => {
     res.setHeader('Access-Control-Allow-Origin', allowedOrigin)
-    res.setHeader('Access-Control-Allow-Methods', 'GET, DELETE, OPTIONS')
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS')
     res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type')
   }
+
+  const readBody = (req: IncomingMessage): Promise<string> =>
+    new Promise((resolve) => {
+      let data = ''
+      req.on('data', (chunk) => {
+        data += chunk
+      })
+      req.on('end', () => resolve(data))
+      req.on('error', () => resolve(''))
+    })
 
   const isAuthorized = (req: IncomingMessage): boolean => {
     if (!token) return true
@@ -29,7 +42,7 @@ export function createServer(opts: ServerOptions): Server {
     res.end(JSON.stringify(body))
   }
 
-  return createHttpServer((req, res) => {
+  return createHttpServer(async (req, res) => {
     setCors(res)
 
     if (req.method === 'OPTIONS') {
@@ -49,6 +62,24 @@ export function createServer(opts: ServerOptions): Server {
 
       if (!isAuthorized(req)) {
         json(res, 401, { error: 'unauthorized' })
+        return
+      }
+
+      if (req.method === 'POST' && url.pathname === '/api/connect') {
+        let parsed: { url?: unknown; secret?: unknown }
+        try {
+          parsed = JSON.parse(await readBody(req))
+        } catch {
+          json(res, 400, { error: 'invalid json' })
+          return
+        }
+        if (typeof parsed.url !== 'string' || !parsed.url) {
+          json(res, 400, { error: 'url is required' })
+          return
+        }
+        const secret = typeof parsed.secret === 'string' ? parsed.secret : ''
+        onConnect?.(parsed.url, secret)
+        json(res, 200, { ok: true })
         return
       }
 

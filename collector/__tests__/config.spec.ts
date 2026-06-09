@@ -7,8 +7,10 @@ describe('collector/config', () => {
     expect(toWsURL('https://host:9090')).toBe('wss://host:9090')
   })
 
-  it('throws when MIHOMO_API_URL is missing', () => {
-    expect(() => loadConfig({})).toThrow(/MIHOMO_API_URL is required/)
+  it('defaults to an empty mihomo target when MIHOMO_API_URL is missing', () => {
+    const cfg = loadConfig({})
+    expect(cfg.mihomoApiURL).toBe('')
+    expect(cfg.mihomoWsURL).toBe('')
   })
 
   it('throws when MIHOMO_API_URL is not a valid URL', () => {

@@ -23,12 +23,16 @@ describe('collector/server', () => {
   let server: Server
   let base: string
 
-  const start = async (token = ''): Promise<void> => {
+  const start = async (
+    token = '',
+    onConnect?: (apiURL: string, secret: string) => void,
+  ): Promise<void> => {
     server = createServer({
       store,
       token,
       allowedOrigin: '*',
       startedAt: 1000,
+      onConnect,
     })
     await new Promise<void>((resolve) => server.listen(0, resolve))
     const port = (server.address() as AddressInfo).port
@@ -90,6 +94,28 @@ describe('collector/server', () => {
     const res = await fetch(`${base}/api/logs`, { method: 'DELETE' })
     expect(res.status).toBe(200)
     expect(store.count()).toBe(0)
+  })
+
+  it('pOST /api/connect forwards url and secret to onConnect', async () => {
+    const calls: [string, string][] = []
+    await start('', (apiURL, secret) => calls.push([apiURL, secret]))
+    const res = await fetch(`${base}/api/connect`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: 'http://127.0.0.1:9090', secret: 's3cr3t' }),
+    })
+    expect(res.status).toBe(200)
+    expect(calls).toEqual([['http://127.0.0.1:9090', 's3cr3t']])
+  })
+
+  it('pOST /api/connect rejects a missing url', async () => {
+    await start()
+    const res = await fetch(`${base}/api/connect`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ secret: 'x' }),
+    })
+    expect(res.status).toBe(400)
   })
 
   it('returns 404 for unknown routes', async () => {

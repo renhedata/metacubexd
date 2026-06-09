@@ -18,13 +18,27 @@ const configStore = {
   collectorToken: 'tok',
 }
 
+const endpointStore = {
+  currentEndpoint: {
+    id: 'e1',
+    url: 'http://127.0.0.1:9090',
+    secret: 'mihomo-secret',
+  },
+}
+
 vi.stubGlobal('useConfigStore', () => configStore)
+vi.stubGlobal('useEndpointStore', () => endpointStore)
 
 beforeEach(() => {
   vi.clearAllMocks()
   configStore.enableBackgroundCollector = false
   configStore.collectorURL = 'http://collector:9797'
   configStore.collectorToken = 'tok'
+  endpointStore.currentEndpoint = {
+    id: 'e1',
+    url: 'http://127.0.0.1:9090',
+    secret: 'mihomo-secret',
+  }
 })
 
 describe('composables/useDataUsageSource', () => {
@@ -86,6 +100,44 @@ describe('composables/useDataUsageSource', () => {
     )
     const { query } = useDataUsageSource()
     await expect(query(0, 1)).rejects.toThrow(/collector/i)
+  })
+
+  it('configureCollector POSTs the current endpoint to /api/connect', async () => {
+    configStore.enableBackgroundCollector = true
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => ({}) })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { configureCollector } = useDataUsageSource()
+    await configureCollector()
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://collector:9797/api/connect',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer tok',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          url: 'http://127.0.0.1:9090',
+          secret: 'mihomo-secret',
+        }),
+      },
+    )
+  })
+
+  it('configureCollector is a no-op when there is no current endpoint', async () => {
+    endpointStore.currentEndpoint =
+      null as unknown as typeof endpointStore.currentEndpoint
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { configureCollector } = useDataUsageSource()
+    await configureCollector()
+
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('clearCollectorData issues a DELETE to the collector', async () => {
