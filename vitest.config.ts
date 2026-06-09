@@ -24,7 +24,12 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'html', 'lcov'],
-      include: ['stores/**/*.ts', 'composables/**/*.ts', 'utils/**/*.ts'],
+      include: [
+        'stores/**/*.ts',
+        'composables/**/*.ts',
+        'utils/**/*.ts',
+        'collector/**/*.ts',
+      ],
       exclude: ['**/__tests__/**', '**/index.ts', '**/*.d.ts'],
     },
   },
