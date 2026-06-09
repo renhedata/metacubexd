@@ -13,8 +13,8 @@ services:
     image: metacubexd:local
     container_name: metacubexd
     restart: always
-    ports:
-      - '80:80'
+    # ports:
+    #   - '80:80'
 
   collector:
     build: .
@@ -22,8 +22,8 @@ services:
     container_name: metacubexd-collector
     restart: always
     command: ['node', '--no-warnings', '/app/collector/index.mjs']
-    ports:
-      - '9797:9797'
+    # ports:
+    #   - '9797:9797'
     environment:
       PORT: '9797'
       DB_PATH: /data/collector.sqlite
