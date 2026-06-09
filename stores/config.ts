@@ -174,7 +174,9 @@ export const useConfigStore = defineStore('config', () => {
     'enableBackgroundCollector',
     false,
   )
-  const collectorURL = useLocalStorage('collectorURL', '')
+  // Defaulted to the collector's default address so enabling the toggle works
+  // with no manual entry (the daemon's default PORT is 9797 on the same host).
+  const collectorURL = useLocalStorage('collectorURL', 'http://localhost:9797')
   const collectorToken = useLocalStorage('collectorToken', '')
 
   // Computed
@@ -240,7 +242,7 @@ export const useConfigStore = defineStore('config', () => {
     defaultPage.value = 'overview'
     enableDataUsageTracking.value = true
     enableBackgroundCollector.value = false
-    collectorURL.value = ''
+    collectorURL.value = 'http://localhost:9797'
     collectorToken.value = ''
   }
 
