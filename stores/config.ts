@@ -166,6 +166,19 @@ export const useConfigStore = defineStore('config', () => {
     true,
   )
 
+  // Background collector. When enabled, the Data Usage page reads historical
+  // stats from a standalone collector daemon (over HTTP) instead of IndexedDB.
+  // The daemon runs independently of the browser, so stats keep accruing even
+  // when the browser is fully closed. See collector/ and the design spec.
+  const enableBackgroundCollector = useLocalStorage(
+    'enableBackgroundCollector',
+    false,
+  )
+  // Defaulted to the collector's default address so enabling the toggle works
+  // with no manual entry (the daemon's default PORT is 9797 on the same host).
+  const collectorURL = useLocalStorage('collectorURL', 'http://localhost:9797')
+  const collectorToken = useLocalStorage('collectorToken', '')
+
   // Computed
   const isLatencyTestByHttps = computed(() =>
     urlForLatencyTest.value.startsWith('https'),
@@ -228,6 +241,9 @@ export const useConfigStore = defineStore('config', () => {
     curTheme.value = 'sunset'
     defaultPage.value = 'overview'
     enableDataUsageTracking.value = true
+    enableBackgroundCollector.value = false
+    collectorURL.value = 'http://localhost:9797'
+    collectorToken.value = ''
   }
 
   return {
@@ -278,6 +294,9 @@ export const useConfigStore = defineStore('config', () => {
     showNetworkTopology,
     // Data usage
     enableDataUsageTracking,
+    enableBackgroundCollector,
+    collectorURL,
+    collectorToken,
     // Computed
     isLatencyTestByHttps,
     latencyQualityMap,

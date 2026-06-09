@@ -567,6 +567,51 @@ const activeSection = ref<'core' | 'xd' | 'tools'>('core')
                 />
               </div>
 
+              <div
+                class="flex items-center justify-between gap-4 rounded-lg px-2 py-1.5 transition-colors hover:bg-base-content/5"
+              >
+                <div class="flex flex-col gap-0.5">
+                  <span class="text-sm">{{
+                    t('enableBackgroundCollector')
+                  }}</span>
+                  <span class="text-xs opacity-50">{{
+                    t('enableBackgroundCollectorDesc')
+                  }}</span>
+                </div>
+                <input
+                  v-model="configStore.enableBackgroundCollector"
+                  type="checkbox"
+                  class="toggle toggle-primary"
+                />
+              </div>
+
+              <div
+                v-if="configStore.enableBackgroundCollector"
+                class="flex flex-col gap-2 rounded-lg px-2 py-1.5"
+              >
+                <label class="flex flex-col gap-1">
+                  <span class="text-xs opacity-70">{{
+                    t('collectorURL')
+                  }}</span>
+                  <input
+                    v-model="configStore.collectorURL"
+                    type="url"
+                    placeholder="http://localhost:9797"
+                    class="input-bordered input input-sm w-full"
+                  />
+                </label>
+                <label class="flex flex-col gap-1">
+                  <span class="text-xs opacity-70">{{
+                    t('collectorToken')
+                  }}</span>
+                  <input
+                    v-model="configStore.collectorToken"
+                    type="password"
+                    class="input-bordered input input-sm w-full"
+                  />
+                </label>
+              </div>
+
               <!-- Mobile Bottom Nav Toggle - only visible on mobile -->
               <div
                 class="flex items-center justify-between gap-4 rounded-lg px-2 py-1.5 transition-colors hover:bg-base-content/5 lg:hidden"

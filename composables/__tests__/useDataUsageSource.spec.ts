@@ -1,0 +1,158 @@
+// composables/__tests__/useDataUsageSource.spec.ts
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { useDataUsageSource } from '../useDataUsageSource'
+
+const dbQuery = vi.fn()
+const dbClearAll = vi.fn()
+
+vi.mock('~/utils/db', () => ({
+  db: {
+    query: (...args: unknown[]) => dbQuery(...args),
+    clearAll: (...args: unknown[]) => dbClearAll(...args),
+  },
+}))
+
+const configStore = {
+  enableBackgroundCollector: false,
+  collectorURL: 'http://collector:9797',
+  collectorToken: 'tok',
+}
+
+const endpointStore = {
+  currentEndpoint: {
+    id: 'e1',
+    url: 'http://127.0.0.1:9090',
+    secret: 'mihomo-secret',
+  },
+}
+
+vi.stubGlobal('useConfigStore', () => configStore)
+vi.stubGlobal('useEndpointStore', () => endpointStore)
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  configStore.enableBackgroundCollector = false
+  configStore.collectorURL = 'http://collector:9797'
+  configStore.collectorToken = 'tok'
+  endpointStore.currentEndpoint = {
+    id: 'e1',
+    url: 'http://127.0.0.1:9090',
+    secret: 'mihomo-secret',
+  }
+})
+
+describe('composables/useDataUsageSource', () => {
+  it('queries IndexedDB when the collector is disabled', async () => {
+    dbQuery.mockResolvedValue([{ host: 'local' }])
+    const { query } = useDataUsageSource()
+
+    const rows = await query(0, 100)
+
+    expect(dbQuery).toHaveBeenCalledWith(0, 100)
+    expect(rows).toEqual([{ host: 'local' }])
+  })
+
+  it('queries the collector over HTTP when enabled', async () => {
+    configStore.enableBackgroundCollector = true
+    const row = {
+      timestamp: 60000,
+      sourceIP: '10.0.0.1',
+      host: 'remote',
+      outbound: 'PROXY',
+      process: 'curl',
+      inboundUser: 'Unknown',
+      upload: 1,
+      download: 2,
+    }
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [row],
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { query } = useDataUsageSource()
+    const rows = await query(10, 20)
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://collector:9797/api/logs?start=10&end=20',
+      { headers: { Authorization: 'Bearer tok' } },
+    )
+    expect(rows).toEqual([row])
+  })
+
+  it('throws a clear error when enabled but the collector URL is blank', async () => {
+    configStore.enableBackgroundCollector = true
+    configStore.collectorURL = ''
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { query } = useDataUsageSource()
+
+    await expect(query(0, 1)).rejects.toThrow(/Collector URL is not set/)
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('throws when the collector responds non-ok', async () => {
+    configStore.enableBackgroundCollector = true
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: false, status: 503 }),
+    )
+    const { query } = useDataUsageSource()
+    await expect(query(0, 1)).rejects.toThrow(/collector/i)
+  })
+
+  it('configureCollector POSTs the current endpoint to /api/connect', async () => {
+    configStore.enableBackgroundCollector = true
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => ({}) })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { configureCollector } = useDataUsageSource()
+    await configureCollector()
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://collector:9797/api/connect',
+      {
+        method: 'POST',
+        headers: {
+          Authorization: 'Bearer tok',
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          url: 'http://127.0.0.1:9090',
+          secret: 'mihomo-secret',
+        }),
+      },
+    )
+  })
+
+  it('configureCollector is a no-op when there is no current endpoint', async () => {
+    endpointStore.currentEndpoint =
+      null as unknown as typeof endpointStore.currentEndpoint
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { configureCollector } = useDataUsageSource()
+    await configureCollector()
+
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('clearCollectorData issues a DELETE to the collector', async () => {
+    configStore.enableBackgroundCollector = true
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => ({}) })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { clearCollectorData } = useDataUsageSource()
+    await clearCollectorData()
+
+    expect(fetchMock).toHaveBeenCalledWith('http://collector:9797/api/logs', {
+      method: 'DELETE',
+      headers: { Authorization: 'Bearer tok' },
+    })
+  })
+})
