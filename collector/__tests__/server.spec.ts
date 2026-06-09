@@ -1,10 +1,10 @@
 import type { Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import type {Store} from '../store';
+import type { Store } from '../store'
 import type { DataUsageLog } from '../types'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createServer } from '../server'
-import { createStore  } from '../store'
+import { createStore } from '../store'
 
 const makeLog = (over: Partial<DataUsageLog> = {}): DataUsageLog => ({
   timestamp: 60000,
@@ -65,6 +65,14 @@ describe('collector/server', () => {
   it('rejects /api/logs without a valid bearer token', async () => {
     await start('secret')
     const res = await fetch(`${base}/api/logs?start=0&end=1`)
+    expect(res.status).toBe(401)
+  })
+
+  it('rejects /api/logs with a wrong bearer token', async () => {
+    await start('secret')
+    const res = await fetch(`${base}/api/logs?start=0&end=1`, {
+      headers: { Authorization: 'Bearer wrong' },
+    })
     expect(res.status).toBe(401)
   })
 

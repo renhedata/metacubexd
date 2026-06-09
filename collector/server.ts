@@ -45,30 +45,36 @@ export function createServer(opts: ServerOptions): Server {
 
     const url = new URL(req.url ?? '/', 'http://localhost')
 
-    // Health is public so the dashboard can probe reachability without a token.
-    if (req.method === 'GET' && url.pathname === '/api/health') {
-      json(res, 200, { ok: true, since: startedAt, count: store.count() })
-      return
-    }
+    try {
+      // Health is public so the dashboard can probe reachability without a token.
+      if (req.method === 'GET' && url.pathname === '/api/health') {
+        json(res, 200, { ok: true, since: startedAt, count: store.count() })
+        return
+      }
 
-    if (!isAuthorized(req)) {
-      json(res, 401, { error: 'unauthorized' })
-      return
-    }
+      if (!isAuthorized(req)) {
+        json(res, 401, { error: 'unauthorized' })
+        return
+      }
 
-    if (req.method === 'GET' && url.pathname === '/api/logs') {
-      const start = Number(url.searchParams.get('start') ?? 0)
-      const end = Number(url.searchParams.get('end') ?? Date.now())
-      json(res, 200, store.query(start, end))
-      return
-    }
+      if (req.method === 'GET' && url.pathname === '/api/logs') {
+        const start = Number(url.searchParams.get('start')) || 0
+        const endParam = Number(url.searchParams.get('end'))
+        const end =
+          Number.isFinite(endParam) && endParam > 0 ? endParam : Date.now()
+        json(res, 200, store.query(start, end))
+        return
+      }
 
-    if (req.method === 'DELETE' && url.pathname === '/api/logs') {
-      store.clearAll()
-      json(res, 200, { ok: true })
-      return
-    }
+      if (req.method === 'DELETE' && url.pathname === '/api/logs') {
+        store.clearAll()
+        json(res, 200, { ok: true })
+        return
+      }
 
-    json(res, 404, { error: 'not found' })
+      json(res, 404, { error: 'not found' })
+    } catch {
+      json(res, 500, { error: 'internal error' })
+    }
   })
 }
