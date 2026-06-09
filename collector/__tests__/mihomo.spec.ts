@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { connectMihomo } from '../mihomo'
 
 class MockWebSocket {
@@ -15,30 +15,6 @@ class MockWebSocket {
 beforeEach(() => {
   MockWebSocket.instances = []
   vi.stubGlobal('WebSocket', MockWebSocket)
-})
-
-afterEach(() => {
-  vi.unstubAllGlobals()
-  // Re-stub localStorage if it got destroyed so the global setup can use it next
-  if (typeof localStorage === 'undefined') {
-    let store: Record<string, string> = {}
-    vi.stubGlobal('localStorage', {
-      getItem: (key: string) => store[key] ?? null,
-      setItem: (key: string, value: string) => {
-        store[key] = value
-      },
-      removeItem: (key: string) => {
-        delete store[key]
-      },
-      clear: () => {
-        store = {}
-      },
-      get length() {
-        return Object.keys(store).length
-      },
-      key: (index: number) => Object.keys(store)[index] ?? null,
-    })
-  }
 })
 
 describe('collector/mihomo', () => {
