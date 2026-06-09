@@ -1,1 +1,10 @@
 node_modules
+.output
+.nuxt
+.nitro
+.cache
+.data
+dist
+coverage
+.git
+*.log

@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "build": "nuxt build",
+    "build:collector": "esbuild collector/index.ts --bundle --platform=node --format=esm --outfile=dist/collector/index.mjs",
     "build:mock": "MOCK_MODE=true nuxt build",
     "collector": "tsx collector/index.ts",
     "dev": "nuxt dev --host",
@@ -117,6 +118,7 @@
     "@types/semver": "^7.7.1",
     "@vite-pwa/nuxt": "^1.1.1",
     "@vitest/coverage-v8": "^4.1.8",
+    "esbuild": "^0.25.0",
     "jsdom": "^29.1.1"
   }
 }
