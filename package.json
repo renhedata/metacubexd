@@ -7,6 +7,7 @@
   "scripts": {
     "build": "nuxt build",
     "build:mock": "MOCK_MODE=true nuxt build",
+    "collector": "tsx collector/index.ts",
     "dev": "nuxt dev --host",
     "dev:mock": "MOCK_MODE=true nuxt dev --host",
     "format": "pnpm prettier --write --ignore-unknown .",
@@ -20,7 +21,8 @@
     "test:e2e": "vitest run e2e/",
     "test:unit": "vitest run --exclude='e2e/**'",
     "test:coverage": "vitest run --coverage --exclude='e2e/**'",
-    "typecheck": "vue-tsc --noEmit"
+    "typecheck": "vue-tsc --noEmit",
+    "typecheck:collector": "tsc -p collector/tsconfig.json"
   },
   "dependencies": {
     "@antfu/eslint-config": "^9.0.0",
