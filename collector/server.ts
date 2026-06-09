@@ -1,11 +1,6 @@
-import type {IncomingMessage, Server, ServerResponse} from 'node:http';
+import type { IncomingMessage, Server, ServerResponse } from 'node:http'
 import type { Store } from './store'
-import {
-  createServer as createHttpServer
-  
-  
-  
-} from 'node:http'
+import { createServer as createHttpServer } from 'node:http'
 
 export interface ServerOptions {
   store: Store
