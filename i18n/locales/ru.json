@@ -126,7 +126,6 @@
   "collectorURL": "URL сборщика",
   "collectorToken": "Токен сборщика",
   "collectorManagesRetention": "Срок хранения управляется сборщиком",
-  "collectorUnreachable": "Сборщик недоступен",
   "latencyTestTimeoutDuration": "Таймаут теста сети",
   "latencyMediumThreshold": "Жёлтый порог задержки сети",
   "latencyHighThreshold": "Красный порог задержки сети",

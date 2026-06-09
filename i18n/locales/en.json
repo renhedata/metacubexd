@@ -126,7 +126,6 @@
   "collectorURL": "Collector URL",
   "collectorToken": "Collector Token",
   "collectorManagesRetention": "Retention is managed by the collector",
-  "collectorUnreachable": "Collector unreachable",
   "latencyTestTimeoutDuration": "Latency Test Timeout Duration",
   "latencyMediumThreshold": "Latency Yellow Threshold",
   "latencyHighThreshold": "Latency Red Threshold",

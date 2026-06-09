@@ -23,6 +23,8 @@ vi.stubGlobal('useConfigStore', () => configStore)
 beforeEach(() => {
   vi.clearAllMocks()
   configStore.enableBackgroundCollector = false
+  configStore.collectorURL = 'http://collector:9797'
+  configStore.collectorToken = 'tok'
 })
 
 describe('composables/useDataUsageSource', () => {
@@ -62,6 +64,18 @@ describe('composables/useDataUsageSource', () => {
       { headers: { Authorization: 'Bearer tok' } },
     )
     expect(rows).toEqual([row])
+  })
+
+  it('throws a clear error when enabled but the collector URL is blank', async () => {
+    configStore.enableBackgroundCollector = true
+    configStore.collectorURL = ''
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { query } = useDataUsageSource()
+
+    await expect(query(0, 1)).rejects.toThrow(/Collector URL is not set/)
+    expect(fetchMock).not.toHaveBeenCalled()
   })
 
   it('throws when the collector responds non-ok', async () => {

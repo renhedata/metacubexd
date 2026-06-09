@@ -126,7 +126,6 @@
   "collectorURL": "采集器地址",
   "collectorToken": "采集器令牌",
   "collectorManagesRetention": "保留时长由采集器管理",
-  "collectorUnreachable": "采集器无法连接",
   "latencyTestTimeoutDuration": "测速超时时间",
   "latencyMediumThreshold": "延迟黄色阈值",
   "latencyHighThreshold": "延迟红色阈值",

@@ -29,15 +29,26 @@ export function useDataUsageSource(): DataUsageSource {
       ? { Authorization: `Bearer ${configStore.collectorToken}` }
       : {}
 
-  const base = (): string => configStore.collectorURL.replace(/\/$/, '')
+  const collectorBase = (): string => {
+    const url = configStore.collectorURL.replace(/\/$/, '')
+    if (!url) {
+      throw new Error(
+        'Background collector is enabled but Collector URL is not set',
+      )
+    }
+    return url
+  }
 
   const queryCollector = async (
     start: number,
     end: number,
   ): Promise<DataUsageLog[]> => {
-    const res = await fetch(`${base()}/api/logs?start=${start}&end=${end}`, {
-      headers: authHeaders(),
-    })
+    const res = await fetch(
+      `${collectorBase()}/api/logs?start=${start}&end=${end}`,
+      {
+        headers: authHeaders(),
+      },
+    )
     if (!res.ok) {
       throw new Error(`Collector request failed with status ${res.status}`)
     }
@@ -50,7 +61,7 @@ export function useDataUsageSource(): DataUsageSource {
       : db.query(start, end)
 
   const clearCollectorData = async (): Promise<void> => {
-    const res = await fetch(`${base()}/api/logs`, {
+    const res = await fetch(`${collectorBase()}/api/logs`, {
       method: 'DELETE',
       headers: authHeaders(),
     })
