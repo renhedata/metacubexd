@@ -1,5 +1,5 @@
 import type { DataUsageType } from '~/types'
-import { db } from '~/utils/db'
+import { useDataUsageSource } from '~/composables/useDataUsageSource'
 
 export interface AggregatedData {
   label: string
@@ -10,12 +10,14 @@ export interface AggregatedData {
 }
 
 export const useDataUsage = () => {
+  const source = useDataUsageSource()
+
   const getAggregatedData = async (
     type: DataUsageType,
     startTime: number,
     endTime: number,
   ): Promise<AggregatedData[]> => {
-    const logs = await db.query(startTime, endTime)
+    const logs = await source.query(startTime, endTime)
     const map = new Map<string, AggregatedData>()
 
     logs.forEach((log) => {
@@ -64,7 +66,7 @@ export const useDataUsage = () => {
     startTime: number,
     endTime: number,
   ): Promise<AggregatedData[]> => {
-    const logs = await db.query(startTime, endTime)
+    const logs = await source.query(startTime, endTime)
     const filteredLogs = logs.filter((log) => {
       switch (dimension) {
         case 'sourceIP':
@@ -109,7 +111,7 @@ export const useDataUsage = () => {
     startTime: number,
     endTime: number,
   ): Promise<AggregatedData[]> => {
-    const logs = await db.query(startTime, endTime)
+    const logs = await source.query(startTime, endTime)
     const filteredLogs = logs.filter((log) => {
       if (log.host !== host) return false
       switch (dimension) {
@@ -153,7 +155,7 @@ export const useDataUsage = () => {
     startTime: number,
     endTime: number,
   ): Promise<AggregatedData[]> => {
-    const logs = await db.query(startTime, endTime)
+    const logs = await source.query(startTime, endTime)
     const filteredLogs = logs.filter((log) => log.host === host)
 
     const map = new Map<string, AggregatedData>()
@@ -185,7 +187,7 @@ export const useDataUsage = () => {
     startTime: number,
     endTime: number,
   ): Promise<AggregatedData[]> => {
-    const logs = await db.query(startTime, endTime)
+    const logs = await source.query(startTime, endTime)
     const filteredLogs = logs.filter(
       (log) => log.outbound === proxy && log.host === host,
     )
@@ -218,7 +220,7 @@ export const useDataUsage = () => {
     startTime: number,
     endTime: number,
   ): Promise<AggregatedData[]> => {
-    const logs = await db.query(startTime, endTime)
+    const logs = await source.query(startTime, endTime)
     const filteredLogs = logs.filter((log) => log.host === host)
 
     const map = new Map<string, AggregatedData>()
@@ -249,7 +251,7 @@ export const useDataUsage = () => {
     endTime: number,
     bucketSizeMs: number,
   ): Promise<{ timestamp: number; upload: number; download: number }[]> => {
-    const logs = await db.query(startTime, endTime)
+    const logs = await source.query(startTime, endTime)
     const buckets = new Map<number, { upload: number; download: number }>()
 
     for (let t = startTime; t <= endTime; t += bucketSizeMs) {
