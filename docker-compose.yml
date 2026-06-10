@@ -24,6 +24,8 @@ services:
       COLLECTOR_TOKEN: ${COLLECTOR_TOKEN:?set an API key for the collector}
       # Optional seed backend; more backends register automatically when you
       # enable the collector in the dashboard (and persist across restarts).
+      # Note: while set, the seed re-registers on every restart — even after
+      # you remove it in the dashboard. Unset it to make removal stick.
       # MIHOMO_API_URL: 'http://your-mihomo-host:9090'
       # MIHOMO_SECRET: 'your-secret'
       # RETENTION_MS: '0'           # 0 = keep forever; e.g. 2592000000 = 30 days
