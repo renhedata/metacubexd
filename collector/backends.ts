@@ -7,8 +7,16 @@ import { connectMihomo } from './mihomo'
 import { createTracker } from './tracker'
 
 // Keep in sync with utils/collector.ts (the frontend mirror).
+// Canonical form: scheme + host + path, lowercased host (via WHATWG URL),
+// no credentials/query/fragment, no trailing slashes. The path is kept so a
+// mihomo controller behind a reverse-proxy path prefix still works.
 export function normalizeBackend(raw: string): string {
-  return new URL(raw).href.replace(/\/$/, '')
+  const u = new URL(raw)
+  u.username = ''
+  u.password = ''
+  u.search = ''
+  u.hash = ''
+  return u.href.replace(/\/+$/, '')
 }
 
 export interface BackendStatus {
@@ -70,13 +78,20 @@ export function createBackendManager(
       store.upsertBackend(url, secret)
       const existing = active.get(url)
       if (existing && existing.secret === secret) return
-      existing?.client.close()
+      if (existing) {
+        // Secret rotation replaces client and tracker; persist what the old
+        // tracker buffered so up to one flush interval of data is not lost.
+        const pending = existing.tracker.drainBuffer()
+        if (pending.length > 0) store.insertLogs(url, pending)
+        existing.client.close()
+      }
       open(url, secret)
     },
     remove(rawUrl) {
       const url = normalizeBackend(rawUrl)
       active.get(url)?.client.close()
       active.delete(url)
+      // Buffered deltas are dropped deliberately: removal means "forget this backend".
       store.removeBackend(url)
       log(`removed backend ${url}`)
     },
@@ -96,6 +111,9 @@ export function createBackendManager(
       }
       return out
     },
+    // Startup-only rehydration: opens registered backends that are not active
+    // yet. It does not reconcile secret changes — runtime updates go through
+    // upsert().
     loadPersisted() {
       for (const b of store.listBackends()) {
         if (!active.has(b.url)) open(b.url, b.secret)

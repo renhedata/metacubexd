@@ -66,6 +66,11 @@ describe('collector/backends', () => {
     )
     expect(normalizeBackend('http://h:9090')).toBe('http://h:9090')
     expect(() => normalizeBackend('not a url')).toThrow()
+    expect(normalizeBackend('http://user:pass@h:9090/')).toBe('http://h:9090')
+    expect(normalizeBackend('http://h:9090/?x=1#frag')).toBe('http://h:9090')
+    expect(normalizeBackend('https://example.com/mihomo/')).toBe(
+      'https://example.com/mihomo',
+    )
   })
 
   it('upsert connects and persists the backend', () => {
@@ -102,6 +107,18 @@ describe('collector/backends', () => {
     expect(conns[0]!.closed).toBe(true)
     expect(conns[1]!.secret).toBe('s2')
     expect(store.listBackends()[0]!.secret).toBe('s2')
+  })
+
+  it('upsert with a changed secret persists buffered deltas first', () => {
+    const { conns, connect } = makeFakeConnect()
+    const manager = createBackendManager({ store, connect })
+    manager.upsert(A, 's1')
+
+    feedDelta(conns[0]!)
+    manager.upsert(A, 's2')
+
+    expect(store.countByBackend(A)).toBe(1)
+    expect(store.query(A, 0, Date.now())[0]!.upload).toBe(100)
   })
 
   it('drainAll tags drained logs with their backend', () => {
