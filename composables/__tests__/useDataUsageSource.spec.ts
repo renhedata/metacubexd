@@ -29,6 +29,9 @@ const endpointStore = {
 vi.stubGlobal('useConfigStore', () => configStore)
 vi.stubGlobal('useEndpointStore', () => endpointStore)
 
+// normalizeBackend('http://127.0.0.1:9090') -> 'http://127.0.0.1:9090'
+const BACKEND = encodeURIComponent('http://127.0.0.1:9090')
+
 beforeEach(() => {
   vi.clearAllMocks()
   configStore.enableBackgroundCollector = false
@@ -52,7 +55,7 @@ describe('composables/useDataUsageSource', () => {
     expect(rows).toEqual([{ host: 'local' }])
   })
 
-  it('queries the collector over HTTP when enabled', async () => {
+  it('queries the collector with the current backend when enabled', async () => {
     configStore.enableBackgroundCollector = true
     const row = {
       timestamp: 60000,
@@ -74,29 +77,24 @@ describe('composables/useDataUsageSource', () => {
     const rows = await query(10, 20)
 
     expect(fetchMock).toHaveBeenCalledWith(
-      'http://collector:9797/api/logs?start=10&end=20',
+      `http://collector:9797/api/logs?backend=${BACKEND}&start=10&end=20`,
       { headers: { Authorization: 'Bearer tok' } },
     )
     expect(rows).toEqual([row])
   })
 
-  it('uses the same-origin /__collector proxy when no collector URL is set', async () => {
+  it('falls back to IndexedDB when enabled but no collector URL is set', async () => {
     configStore.enableBackgroundCollector = true
     configStore.collectorURL = ''
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValue({ ok: true, json: async () => [] })
+    dbQuery.mockResolvedValue([])
+    const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
 
     const { query } = useDataUsageSource()
     await query(0, 1)
 
-    expect(fetchMock).toHaveBeenCalledWith(
-      '/__collector/api/logs?start=0&end=1',
-      {
-        headers: { Authorization: 'Bearer tok' },
-      },
-    )
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(dbQuery).toHaveBeenCalledWith(0, 1)
   })
 
   it('throws when the collector responds non-ok', async () => {
@@ -135,19 +133,24 @@ describe('composables/useDataUsageSource', () => {
     )
   })
 
-  it('configureCollector is a no-op when there is no current endpoint', async () => {
-    endpointStore.currentEndpoint =
-      null as unknown as typeof endpointStore.currentEndpoint
+  it('configureCollector is a no-op without an endpoint or collector URL', async () => {
+    configStore.enableBackgroundCollector = true
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
 
-    const { configureCollector } = useDataUsageSource()
-    await configureCollector()
+    configStore.collectorURL = ''
+    const source = useDataUsageSource()
+    await source.configureCollector()
+
+    configStore.collectorURL = 'http://collector:9797'
+    endpointStore.currentEndpoint =
+      null as unknown as typeof endpointStore.currentEndpoint
+    await source.configureCollector()
 
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it('clearCollectorData issues a DELETE to the collector', async () => {
+  it('clearCollectorData issues a backend-scoped DELETE', async () => {
     configStore.enableBackgroundCollector = true
     const fetchMock = vi
       .fn()
@@ -157,9 +160,50 @@ describe('composables/useDataUsageSource', () => {
     const { clearCollectorData } = useDataUsageSource()
     await clearCollectorData()
 
-    expect(fetchMock).toHaveBeenCalledWith('http://collector:9797/api/logs', {
-      method: 'DELETE',
-      headers: { Authorization: 'Bearer tok' },
-    })
+    expect(fetchMock).toHaveBeenCalledWith(
+      `http://collector:9797/api/logs?backend=${BACKEND}`,
+      {
+        method: 'DELETE',
+        headers: { Authorization: 'Bearer tok' },
+      },
+    )
+  })
+
+  it('clearCollectorData throws when the collector is not configured', async () => {
+    configStore.enableBackgroundCollector = true
+    configStore.collectorURL = ''
+    const { clearCollectorData } = useDataUsageSource()
+    await expect(clearCollectorData()).rejects.toThrow(/not configured/i)
+  })
+
+  it('rejects malformed collector rows (schema drift guard)', async () => {
+    configStore.enableBackgroundCollector = true
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => [{ host: 123 }],
+      }),
+    )
+    const { query } = useDataUsageSource()
+    await expect(query(0, 1)).rejects.toThrow()
+  })
+
+  it('falls back to IndexedDB when the endpoint URL is malformed', async () => {
+    configStore.enableBackgroundCollector = true
+    endpointStore.currentEndpoint = {
+      id: 'e1',
+      url: 'not-a-url',
+      secret: '',
+    }
+    dbQuery.mockResolvedValue([])
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { query } = useDataUsageSource()
+    await query(0, 1)
+
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(dbQuery).toHaveBeenCalledWith(0, 1)
   })
 })

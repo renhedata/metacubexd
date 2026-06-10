@@ -174,10 +174,9 @@ export const useConfigStore = defineStore('config', () => {
     'enableBackgroundCollector',
     false,
   )
-  // Empty by default: the dashboard reaches the bundled collector through its
-  // own server at the same origin (/__collector proxy), so no address is needed
-  // — just toggle the feature on. Set this only to point at a collector running
-  // elsewhere (e.g. a separate container or host).
+  // Address + API key of the standalone collector service (required when the
+  // feature is enabled). Typically a domain mapped by a reverse proxy to the
+  // collector container, e.g. https://collector.example.com.
   const collectorURL = useLocalStorage('collectorURL', '')
   const collectorToken = useLocalStorage('collectorToken', '')
 

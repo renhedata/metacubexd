@@ -19,7 +19,9 @@ RUN pnpm build:collector
 FROM docker.io/node:alpine
 
 ENV PORT=80
-EXPOSE 80
+# 80 = dashboard (default CMD); 9797 = collector (compose command override).
+# Reverse proxies like Coolify use EXPOSE to auto-detect mappable ports.
+EXPOSE 80 9797
 
 WORKDIR /app
 
