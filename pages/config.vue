@@ -596,9 +596,12 @@ const activeSection = ref<'core' | 'xd' | 'tools'>('core')
                   <input
                     v-model="configStore.collectorURL"
                     type="url"
-                    placeholder="http://localhost:9797"
+                    :placeholder="t('collectorURLPlaceholder')"
                     class="input-bordered input input-sm w-full"
                   />
+                  <span class="text-xs opacity-40">{{
+                    t('collectorURLHint')
+                  }}</span>
                 </label>
                 <label class="flex flex-col gap-1">
                   <span class="text-xs opacity-70">{{

@@ -31,15 +31,11 @@ export function useDataUsageSource(): DataUsageSource {
       ? { Authorization: `Bearer ${configStore.collectorToken}` }
       : {}
 
-  const collectorBase = (): string => {
-    const url = configStore.collectorURL.replace(/\/$/, '')
-    if (!url) {
-      throw new Error(
-        'Background collector is enabled but Collector URL is not set',
-      )
-    }
-    return url
-  }
+  // When no explicit URL is set, talk to the bundled collector through this
+  // dashboard's own server (same-origin /__collector proxy) — zero config. A
+  // non-empty value points at a collector running elsewhere.
+  const collectorBase = (): string =>
+    configStore.collectorURL.replace(/\/$/, '') || '/__collector'
 
   const queryCollector = async (
     start: number,
