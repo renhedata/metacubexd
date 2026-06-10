@@ -178,6 +178,31 @@ const isError = computed(() => isErrorConfig.value || isErrorVersion.value)
 
 // Active section for mobile tabs
 const activeSection = ref<'core' | 'xd' | 'tools'>('core')
+
+// Collector health probe
+const collectorHealth = ref<'idle' | 'ok' | 'fail'>('idle')
+
+const probeCollector = useDebounceFn(async () => {
+  const base = configStore.collectorURL.replace(/\/$/, '')
+  if (!configStore.enableBackgroundCollector || !base) {
+    collectorHealth.value = 'idle'
+    return
+  }
+  try {
+    const res = await fetch(`${base}/api/health`)
+    collectorHealth.value = res.ok ? 'ok' : 'fail'
+  } catch {
+    collectorHealth.value = 'fail'
+  }
+}, 500)
+
+watch(
+  () => [configStore.enableBackgroundCollector, configStore.collectorURL],
+  () => {
+    void probeCollector()
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
@@ -596,6 +621,7 @@ const activeSection = ref<'core' | 'xd' | 'tools'>('core')
                   <input
                     v-model="configStore.collectorURL"
                     type="url"
+                    required
                     :placeholder="t('collectorURLPlaceholder')"
                     class="input-bordered input input-sm w-full"
                   />
@@ -610,9 +636,33 @@ const activeSection = ref<'core' | 'xd' | 'tools'>('core')
                   <input
                     v-model="configStore.collectorToken"
                     type="password"
+                    required
                     class="input-bordered input input-sm w-full"
                   />
                 </label>
+                <span
+                  v-if="
+                    !configStore.collectorURL || !configStore.collectorToken
+                  "
+                  class="text-xs text-warning"
+                >
+                  {{ t('collectorConfigIncomplete') }}
+                </span>
+                <span
+                  v-else-if="collectorHealth === 'ok'"
+                  class="text-xs text-success"
+                >
+                  {{ t('collectorHealthOk') }}
+                </span>
+                <span
+                  v-else-if="collectorHealth === 'fail'"
+                  class="text-xs text-error"
+                >
+                  {{ t('collectorHealthFail') }}
+                </span>
+                <CollectorBackends
+                  v-if="configStore.collectorURL && configStore.collectorToken"
+                />
               </div>
 
               <!-- Mobile Bottom Nav Toggle - only visible on mobile -->
