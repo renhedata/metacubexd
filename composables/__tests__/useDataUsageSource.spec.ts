@@ -175,4 +175,35 @@ describe('composables/useDataUsageSource', () => {
     const { clearCollectorData } = useDataUsageSource()
     await expect(clearCollectorData()).rejects.toThrow(/not configured/i)
   })
+
+  it('rejects malformed collector rows (schema drift guard)', async () => {
+    configStore.enableBackgroundCollector = true
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => [{ host: 123 }],
+      }),
+    )
+    const { query } = useDataUsageSource()
+    await expect(query(0, 1)).rejects.toThrow()
+  })
+
+  it('falls back to IndexedDB when the endpoint URL is malformed', async () => {
+    configStore.enableBackgroundCollector = true
+    endpointStore.currentEndpoint = {
+      id: 'e1',
+      url: 'not-a-url',
+      secret: '',
+    }
+    dbQuery.mockResolvedValue([])
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { query } = useDataUsageSource()
+    await query(0, 1)
+
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(dbQuery).toHaveBeenCalledWith(0, 1)
+  })
 })
