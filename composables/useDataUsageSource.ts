@@ -1,6 +1,7 @@
 // composables/useDataUsageSource.ts
 import type { DataUsageLog } from '~/utils/db'
 import { z } from 'zod'
+import { normalizeBackend } from '~/utils/collector'
 import { db } from '~/utils/db'
 
 export interface DataUsageSource {
@@ -31,21 +32,34 @@ export function useDataUsageSource(): DataUsageSource {
       ? { Authorization: `Bearer ${configStore.collectorToken}` }
       : {}
 
-  // When no explicit URL is set, talk to the bundled collector through this
-  // dashboard's own server (same-origin /__collector proxy) — zero config. A
-  // non-empty value points at a collector running elsewhere.
   const collectorBase = (): string =>
-    configStore.collectorURL.replace(/\/$/, '') || '/__collector'
+    configStore.collectorURL.replace(/\/$/, '')
+
+  // The collector partitions data per mihomo backend; every logs call is
+  // scoped to the dashboard's currently selected endpoint.
+  const currentBackend = (): string => {
+    const endpoint = endpointStore.currentEndpoint
+    if (!endpoint) return ''
+    try {
+      return normalizeBackend(endpoint.url)
+    } catch {
+      return ''
+    }
+  }
+
+  const collectorReady = (): boolean =>
+    Boolean(configStore.enableBackgroundCollector) &&
+    collectorBase() !== '' &&
+    currentBackend() !== ''
 
   const queryCollector = async (
     start: number,
     end: number,
   ): Promise<DataUsageLog[]> => {
+    const backend = encodeURIComponent(currentBackend())
     const res = await fetch(
-      `${collectorBase()}/api/logs?start=${start}&end=${end}`,
-      {
-        headers: authHeaders(),
-      },
+      `${collectorBase()}/api/logs?backend=${backend}&start=${start}&end=${end}`,
+      { headers: authHeaders() },
     )
     if (!res.ok) {
       throw new Error(`Collector request failed with status ${res.status}`)
@@ -54,12 +68,14 @@ export function useDataUsageSource(): DataUsageSource {
   }
 
   const query = (start: number, end: number): Promise<DataUsageLog[]> =>
-    configStore.enableBackgroundCollector
-      ? queryCollector(start, end)
-      : db.query(start, end)
+    collectorReady() ? queryCollector(start, end) : db.query(start, end)
 
   const clearCollectorData = async (): Promise<void> => {
-    const res = await fetch(`${collectorBase()}/api/logs`, {
+    if (!collectorReady()) {
+      throw new Error('Collector is not configured')
+    }
+    const backend = encodeURIComponent(currentBackend())
+    const res = await fetch(`${collectorBase()}/api/logs?backend=${backend}`, {
       method: 'DELETE',
       headers: authHeaders(),
     })
@@ -68,11 +84,11 @@ export function useDataUsageSource(): DataUsageSource {
     }
   }
 
-  // Push the dashboard's current mihomo endpoint to the collector so it connects
-  // to the same backend without the user entering the mihomo URL/secret manually.
+  // Push the dashboard's current mihomo endpoint to the collector; the
+  // collector adds it to its collection set (upsert, not replace).
   const configureCollector = async (): Promise<void> => {
     const endpoint = endpointStore.currentEndpoint
-    if (!endpoint) return
+    if (!endpoint || !collectorBase()) return
     const res = await fetch(`${collectorBase()}/api/connect`, {
       method: 'POST',
       headers: { ...authHeaders(), 'Content-Type': 'application/json' },
