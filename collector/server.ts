@@ -1,8 +1,12 @@
 import type { IncomingMessage, Server, ServerResponse } from 'node:http'
 import type { BackendManager } from './backends'
 import type { Store } from './store'
+import { Buffer } from 'node:buffer'
+import { timingSafeEqual } from 'node:crypto'
 import { createServer as createHttpServer } from 'node:http'
 import { normalizeBackend } from './backends'
+
+const MAX_BODY_BYTES = 64 * 1024
 
 export interface ServerOptions {
   store: Store
@@ -19,20 +23,37 @@ export function createServer(opts: ServerOptions): Server {
     res.setHeader('Access-Control-Allow-Origin', allowedOrigin)
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS')
     res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type')
+    res.setHeader('Vary', 'Origin')
   }
 
   const readBody = (req: IncomingMessage): Promise<string> =>
-    new Promise((resolve) => {
+    new Promise((resolve, reject) => {
       let data = ''
+      let size = 0
+      let tooLarge = false
       req.on('data', (chunk) => {
+        if (tooLarge) return
+        size += chunk.length
+        if (size > MAX_BODY_BYTES) {
+          // Drain and discard the rest: memory stays bounded and the client
+          // still gets a deterministic 413 instead of a reset socket.
+          tooLarge = true
+          data = ''
+          return
+        }
         data += chunk
       })
-      req.on('end', () => resolve(data))
+      req.on('end', () =>
+        tooLarge ? reject(new Error('payload too large')) : resolve(data),
+      )
       req.on('error', () => resolve(''))
     })
 
-  const isAuthorized = (req: IncomingMessage): boolean =>
-    (req.headers.authorization ?? '') === `Bearer ${token}`
+  const expected = Buffer.from(`Bearer ${token}`)
+  const isAuthorized = (req: IncomingMessage): boolean => {
+    const got = Buffer.from(req.headers.authorization ?? '')
+    return got.length === expected.length && timingSafeEqual(got, expected)
+  }
 
   const json = (res: ServerResponse, status: number, body: unknown): void => {
     res.statusCode = status
@@ -75,9 +96,16 @@ export function createServer(opts: ServerOptions): Server {
       }
 
       if (req.method === 'POST' && url.pathname === '/api/connect') {
+        let body: string
+        try {
+          body = await readBody(req)
+        } catch {
+          json(res, 413, { error: 'payload too large' })
+          return
+        }
         let parsed: { url?: unknown; secret?: unknown }
         try {
-          parsed = JSON.parse(await readBody(req))
+          parsed = JSON.parse(body)
         } catch {
           json(res, 400, { error: 'invalid json' })
           return
@@ -103,7 +131,7 @@ export function createServer(opts: ServerOptions): Server {
           json(res, 400, { error: 'backend is required' })
           return
         }
-        const start = Number(url.searchParams.get('start')) || 0
+        const start = Math.max(0, Number(url.searchParams.get('start')) || 0)
         const endParam = Number(url.searchParams.get('end'))
         const end =
           Number.isFinite(endParam) && endParam > 0 ? endParam : Date.now()

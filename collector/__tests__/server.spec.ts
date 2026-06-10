@@ -193,4 +193,34 @@ describe('collector/server', () => {
     const res = await fetch(`${base}/nope`, { headers: auth })
     expect(res.status).toBe(404)
   })
+
+  it('rejects /api/backends without a token', async () => {
+    const res = await fetch(`${base}/api/backends`)
+    expect(res.status).toBe(401)
+  })
+
+  it('rejects a lowercase bearer scheme (strict header match)', async () => {
+    const res = await fetch(`${base}/api/backends`, {
+      headers: { Authorization: `bearer ${TOKEN}` },
+    })
+    expect(res.status).toBe(401)
+  })
+
+  it('answers OPTIONS preflight with 204 and CORS headers', async () => {
+    const res = await fetch(`${base}/api/logs`, { method: 'OPTIONS' })
+    expect(res.status).toBe(204)
+    expect(res.headers.get('access-control-allow-origin')).toBe('*')
+    expect(res.headers.get('access-control-allow-headers')).toContain(
+      'Authorization',
+    )
+  })
+
+  it('rejects an oversized /api/connect body with 413', async () => {
+    const res = await fetch(`${base}/api/connect`, {
+      method: 'POST',
+      headers: { ...auth, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: A, secret: 'x'.repeat(70 * 1024) }),
+    })
+    expect(res.status).toBe(413)
+  })
 })
