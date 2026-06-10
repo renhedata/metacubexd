@@ -28,11 +28,17 @@ function main(): void {
   manager.loadPersisted()
 
   const flush = (): void => {
-    for (const { backend, logs } of manager.drainAll()) {
-      store.insertLogs(backend, logs)
-    }
-    if (config.retentionMs > 0) {
-      store.cleanup(Date.now() - config.retentionMs)
+    try {
+      for (const { backend, logs } of manager.drainAll()) {
+        store.insertLogs(backend, logs)
+      }
+      if (config.retentionMs > 0) {
+        store.cleanup(Date.now() - config.retentionMs)
+      }
+    } catch (e) {
+      log(
+        `flush error (data may be lost): ${e instanceof Error ? e.message : String(e)}`,
+      )
     }
   }
 
@@ -45,11 +51,20 @@ function main(): void {
     allowedOrigin: config.allowedOrigin,
     startedAt,
   })
+
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    console.error(`[collector] server error: ${err.message}`)
+    process.exit(1)
+  })
+
   server.listen(config.port, () => {
     log(`listening on :${config.port} db=${config.dbPath}`)
   })
 
+  let shuttingDown = false
   const shutdown = (): void => {
+    if (shuttingDown) return
+    shuttingDown = true
     clearInterval(flushTimer)
     flush()
     manager.closeAll()
