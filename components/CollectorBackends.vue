@@ -11,7 +11,7 @@ const handleRemove = async (url: string): Promise<void> => {
   try {
     await remove(url)
   } catch {
-    // surfaced via the error flag on the next refresh
+    // remove() set the error flag; the template shows the error state
   }
 }
 </script>

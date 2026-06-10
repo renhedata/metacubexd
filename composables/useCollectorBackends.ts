@@ -50,14 +50,19 @@ export function useCollectorBackends(): CollectorBackends {
   }
 
   const remove = async (url: string): Promise<void> => {
-    const res = await fetch(
-      `${base()}/api/backends?url=${encodeURIComponent(url)}`,
-      { method: 'DELETE', headers: authHeaders() },
-    )
-    if (!res.ok) {
-      throw new Error(
-        `Collector backend removal failed with status ${res.status}`,
+    try {
+      const res = await fetch(
+        `${base()}/api/backends?url=${encodeURIComponent(url)}`,
+        { method: 'DELETE', headers: authHeaders() },
       )
+      if (!res.ok) {
+        throw new Error(
+          `Collector backend removal failed with status ${res.status}`,
+        )
+      }
+    } catch (e) {
+      error.value = true
+      throw e
     }
     await refresh()
   }

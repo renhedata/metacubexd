@@ -82,4 +82,15 @@ describe('composables/useCollectorBackends', () => {
       { headers: { Authorization: 'Bearer tok' } },
     )
   })
+
+  it('remove flags an error and rethrows on a non-ok response', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({ ok: false, status: 500 }),
+    )
+
+    const { error, remove } = useCollectorBackends()
+    await expect(remove('http://127.0.0.1:9090')).rejects.toThrow(/removal/)
+    expect(error.value).toBe(true)
+  })
 })
