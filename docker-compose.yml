@@ -1,28 +1,33 @@
-# Deploy the metacubexd dashboard with the background traffic collector built in:
-#   docker compose up -d --build
+# Dashboard + standalone traffic collector. No ports are published: attach your
+# reverse proxy (e.g. Coolify) to the containers directly and map a domain to
+# each service — dashboard on :80, collector on :9797.
 #
-# Open http://localhost, then enable Settings -> XD Config -> Background Collector.
-# No collector address is needed: the dashboard reaches the bundled collector
-# internally (same-origin /__collector proxy), and auto-syncs your mihomo endpoint.
+# In the dashboard: Settings -> XD Config -> Background Collector, then enter
+# the collector's public URL (your mapped domain) and the API key set below.
 services:
   metacubexd:
     build: .
     image: metacubexd:local
-    container_name: metacubexd
     restart: always
     init: true
-    # ports:
-    #   - '80:80'
-    # Optional: connect the built-in collector to mihomo on startup so it records
-    # 24/7 even when no browser is open (and survives restarts). Use your mihomo
-    # controller — the same one the dashboard connects to. If left unset, the
-    # dashboard auto-syncs the endpoint when you enable the collector. Uncomment
-    # the `environment:` key together with the vars you need.
-    # environment:
-    #   MIHOMO_API_URL: 'http://your-mihomo-host:9090'
-    #   MIHOMO_SECRET: 'your-secret'
-    #   RETENTION_MS: '0'           # 0 = keep forever; e.g. 2592000000 = 30 days
-    #   ENABLE_COLLECTOR: 'true'    # set 'false' to run the dashboard only
+
+  collector:
+    build: .
+    image: metacubexd:local
+    restart: always
+    init: true
+    command: ['node', '--no-warnings', '/app/collector/index.mjs']
+    environment:
+      PORT: '9797'
+      DB_PATH: /data/collector.sqlite
+      # Required. The dashboard authenticates with this key (Bearer token).
+      COLLECTOR_TOKEN: ${COLLECTOR_TOKEN:?set an API key for the collector}
+      # Optional seed backend; more backends register automatically when you
+      # enable the collector in the dashboard (and persist across restarts).
+      # MIHOMO_API_URL: 'http://your-mihomo-host:9090'
+      # MIHOMO_SECRET: 'your-secret'
+      # RETENTION_MS: '0'           # 0 = keep forever; e.g. 2592000000 = 30 days
+      # ALLOWED_ORIGIN: '*'         # tighten to your dashboard origin if desired
     volumes:
       - collector-data:/data
 
