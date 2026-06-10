@@ -74,6 +74,10 @@ describe('collector/store', () => {
     expect(rows.map((r) => r.url)).toEqual([A, B])
     expect(rows[0]!.secret).toBe('s1-new')
     expect(rows[0]!.addedAt).toBeGreaterThan(0)
+
+    const firstAddedAt = rows[0]!.addedAt
+    store.upsertBackend(A, 's1-final')
+    expect(store.listBackends()[0]!.addedAt).toBe(firstAddedAt)
   })
 
   it('removeBackend drops the registration and its logs', () => {
@@ -129,12 +133,15 @@ describe('collector/store', () => {
     v1.close()
 
     const migrated = createStore(dbPath)
-    // Legacy rows keep backend='' — preserved but invisible to per-backend queries.
-    expect(migrated.count()).toBe(1)
-    expect(migrated.query(A, 0, 100000)).toEqual([])
-    migrated.insertLogs(A, [makeLog()])
-    expect(migrated.countByBackend(A)).toBe(1)
-    migrated.close()
-    rmSync(dir, { recursive: true, force: true })
+    try {
+      // Legacy rows keep backend='' — preserved but invisible to per-backend queries.
+      expect(migrated.count()).toBe(1)
+      expect(migrated.query(A, 0, 100000)).toEqual([])
+      migrated.insertLogs(A, [makeLog()])
+      expect(migrated.countByBackend(A)).toBe(1)
+    } finally {
+      migrated.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
