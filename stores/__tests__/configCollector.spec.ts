@@ -9,10 +9,10 @@ describe('stores/config — background collector settings', () => {
     localStorage.clear()
   })
 
-  it('defaults the collector off, with the collector address prefilled', () => {
+  it('defaults the collector off, with no URL (uses the built-in proxy)', () => {
     const store = useConfigStore()
     expect(store.enableBackgroundCollector).toBe(false)
-    expect(store.collectorURL).toBe('http://localhost:9797')
+    expect(store.collectorURL).toBe('')
     expect(store.collectorToken).toBe('')
   })
 

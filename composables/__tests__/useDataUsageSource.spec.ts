@@ -80,16 +80,23 @@ describe('composables/useDataUsageSource', () => {
     expect(rows).toEqual([row])
   })
 
-  it('throws a clear error when enabled but the collector URL is blank', async () => {
+  it('uses the same-origin /__collector proxy when no collector URL is set', async () => {
     configStore.enableBackgroundCollector = true
     configStore.collectorURL = ''
-    const fetchMock = vi.fn()
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => [] })
     vi.stubGlobal('fetch', fetchMock)
 
     const { query } = useDataUsageSource()
+    await query(0, 1)
 
-    await expect(query(0, 1)).rejects.toThrow(/Collector URL is not set/)
-    expect(fetchMock).not.toHaveBeenCalled()
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/__collector/api/logs?start=0&end=1',
+      {
+        headers: { Authorization: 'Bearer tok' },
+      },
+    )
   })
 
   it('throws when the collector responds non-ok', async () => {

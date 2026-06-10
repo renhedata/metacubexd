@@ -174,9 +174,11 @@ export const useConfigStore = defineStore('config', () => {
     'enableBackgroundCollector',
     false,
   )
-  // Defaulted to the collector's default address so enabling the toggle works
-  // with no manual entry (the daemon's default PORT is 9797 on the same host).
-  const collectorURL = useLocalStorage('collectorURL', 'http://localhost:9797')
+  // Empty by default: the dashboard reaches the bundled collector through its
+  // own server at the same origin (/__collector proxy), so no address is needed
+  // — just toggle the feature on. Set this only to point at a collector running
+  // elsewhere (e.g. a separate container or host).
+  const collectorURL = useLocalStorage('collectorURL', '')
   const collectorToken = useLocalStorage('collectorToken', '')
 
   // Computed
@@ -242,7 +244,7 @@ export const useConfigStore = defineStore('config', () => {
     defaultPage.value = 'overview'
     enableDataUsageTracking.value = true
     enableBackgroundCollector.value = false
-    collectorURL.value = 'http://localhost:9797'
+    collectorURL.value = ''
     collectorToken.value = ''
   }
 
