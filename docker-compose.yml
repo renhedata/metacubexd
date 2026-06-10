@@ -11,8 +11,8 @@ services:
     container_name: metacubexd
     restart: always
     init: true
-    ports:
-      - '80:80'
+    # ports:
+    #   - '80:80'
     # Optional: connect the built-in collector to mihomo on startup so it records
     # 24/7 even when no browser is open (and survives restarts). Use your mihomo
     # controller — the same one the dashboard connects to. If left unset, the
