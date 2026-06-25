@@ -1,27 +1,30 @@
 // composables/useDataUsageSource.ts
-import type { DataUsageLog } from '~/utils/db'
+import type { AggregateQuery, AggregateRow } from '~/types'
 import { z } from 'zod'
 import { normalizeBackend } from '~/utils/collector'
-import { db } from '~/utils/db'
 
 export interface DataUsageSource {
-  query: (start: number, end: number) => Promise<DataUsageLog[]>
+  aggregate: (query: AggregateQuery) => Promise<AggregateRow[]>
   clearCollectorData: () => Promise<void>
   configureCollector: () => Promise<void>
+  ready: () => boolean
 }
 
-const dataUsageLogSchema = z.object({
-  id: z.number().optional(),
-  timestamp: z.number(),
-  sourceIP: z.string(),
-  host: z.string(),
-  outbound: z.string(),
-  process: z.string(),
-  inboundUser: z.string(),
+const aggregateRowSchema = z.object({
+  label: z.union([z.string(), z.number()]),
   upload: z.number(),
   download: z.number(),
+  count: z.number(),
 })
-const dataUsageLogsSchema = z.array(dataUsageLogSchema)
+const aggregateRowsSchema = z.array(aggregateRowSchema)
+
+const FILTER_PARAMS: Record<string, string> = {
+  sourceIP: 'fSourceIP',
+  host: 'fHost',
+  outbound: 'fOutbound',
+  process: 'fProcess',
+  inboundUser: 'fInboundUser',
+}
 
 export function useDataUsageSource(): DataUsageSource {
   const configStore = useConfigStore()
@@ -35,8 +38,8 @@ export function useDataUsageSource(): DataUsageSource {
   const collectorBase = (): string =>
     configStore.collectorURL.replace(/\/$/, '')
 
-  // The collector partitions data per mihomo backend; every logs call is
-  // scoped to the dashboard's currently selected endpoint.
+  // The collector partitions data per mihomo backend; every call is scoped to
+  // the dashboard's currently selected endpoint.
   const currentBackend = (): string => {
     const endpoint = endpointStore.currentEndpoint
     if (!endpoint) return ''
@@ -47,31 +50,35 @@ export function useDataUsageSource(): DataUsageSource {
     }
   }
 
-  const collectorReady = (): boolean =>
+  const ready = (): boolean =>
     Boolean(configStore.enableBackgroundCollector) &&
     collectorBase() !== '' &&
     currentBackend() !== ''
 
-  const queryCollector = async (
-    start: number,
-    end: number,
-  ): Promise<DataUsageLog[]> => {
-    const backend = encodeURIComponent(currentBackend())
-    const res = await fetch(
-      `${collectorBase()}/api/logs?backend=${backend}&start=${start}&end=${end}`,
-      { headers: authHeaders() },
-    )
+  const aggregate = async (query: AggregateQuery): Promise<AggregateRow[]> => {
+    if (!ready()) return []
+
+    const params = new URLSearchParams()
+    params.set('backend', currentBackend())
+    params.set('start', String(query.start))
+    params.set('end', String(query.end))
+    params.set('groupBy', query.groupBy)
+    if (query.bucketMs) params.set('bucket', String(query.bucketMs))
+    for (const [dim, value] of Object.entries(query.filters ?? {})) {
+      if (value !== undefined) params.set(FILTER_PARAMS[dim]!, value)
+    }
+
+    const res = await fetch(`${collectorBase()}/api/aggregate?${params}`, {
+      headers: authHeaders(),
+    })
     if (!res.ok) {
       throw new Error(`Collector request failed with status ${res.status}`)
     }
-    return dataUsageLogsSchema.parse(await res.json())
+    return aggregateRowsSchema.parse(await res.json())
   }
 
-  const query = (start: number, end: number): Promise<DataUsageLog[]> =>
-    collectorReady() ? queryCollector(start, end) : db.query(start, end)
-
   const clearCollectorData = async (): Promise<void> => {
-    if (!collectorReady()) {
+    if (!ready()) {
       throw new Error('Collector is not configured')
     }
     const backend = encodeURIComponent(currentBackend())
@@ -102,5 +109,5 @@ export function useDataUsageSource(): DataUsageSource {
     }
   }
 
-  return { query, clearCollectorData, configureCollector }
+  return { aggregate, clearCollectorData, configureCollector, ready }
 }
