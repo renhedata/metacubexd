@@ -1,7 +1,6 @@
 // collector/types.ts
 
-// Mirrors DataUsageLog in ~/utils/db.ts so the HTTP API is shape-compatible
-// with what the frontend's useDataUsage aggregation expects.
+// DataUsageLog is the collector's own row shape for stored connection deltas.
 export interface DataUsageLog {
   id?: number
   timestamp: number
