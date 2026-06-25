@@ -67,6 +67,30 @@ describe('composables/useDataUsage', () => {
     })
   })
 
+  it('getProxyStatsByHost groups by outbound filtered by host + dimension', async () => {
+    const { getProxyStatsByHost } = useDataUsage()
+    await getProxyStatsByHost('process', 'curl', 'a.com', 0, 100)
+
+    expect(aggregate).toHaveBeenCalledWith({
+      start: 0,
+      end: 100,
+      groupBy: 'outbound',
+      filters: { host: 'a.com', process: 'curl' },
+    })
+  })
+
+  it('getDevicesByHost groups by sourceIP filtered by host', async () => {
+    const { getDevicesByHost } = useDataUsage()
+    await getDevicesByHost('a.com', 0, 100)
+
+    expect(aggregate).toHaveBeenCalledWith({
+      start: 0,
+      end: 100,
+      groupBy: 'sourceIP',
+      filters: { host: 'a.com' },
+    })
+  })
+
   it('getTrafficTrend zero-fills buckets across the range', async () => {
     aggregate.mockResolvedValue([
       { label: 1000, upload: 5, download: 7, count: 1 },

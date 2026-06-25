@@ -48,7 +48,7 @@ export const useDataUsage = () => {
     ).sort(byTotalDesc)
 
   const getProxyStatsByHost = async (
-    dimension: DataUsageType,
+    dimension: Exclude<DataUsageType, 'host' | 'outbound'>,
     parentLabel: string,
     host: string,
     startTime: number,

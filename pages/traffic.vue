@@ -250,7 +250,7 @@ const handleSubRowClick = async (parentLabel: string, subLabel: string) => {
     )
   } else {
     proxyStatsMap.value[compositeKey] = await getProxyStatsByHost(
-      activeView.value as DataUsageType,
+      activeView.value as Exclude<DataUsageType, 'host' | 'outbound'>,
       parentLabel,
       subLabel,
       startTime,
