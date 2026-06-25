@@ -85,12 +85,6 @@ export const useConnectionsStore = defineStore('connections', () => {
     allConns: Connection[],
   ) => allConns.filter((c) => !activeIds.has(c.id))
 
-  // Cleanup inactive connections — drop per-connection tracking state for ids
-  // that are no longer active. Receives a prebuilt id set from the caller.
-  const cleanupInactiveConnections = (_activeIds: Set<string>) => {
-    // No-op: per-connection tracking removed with local data-usage subsystem.
-  }
-
   // Update connections from WebSocket message
   const updateFromWsMsg = (msg: WsMsg) => {
     latestConnectionMsg.value = msg
@@ -120,9 +114,6 @@ export const useConnectionsStore = defineStore('connections', () => {
     // Build the active-id set once and reuse it for both cleanup and the
     // closed-connection diff instead of rebuilding it in each helper.
     const activeIds = new Set(activeConns.map((c) => c.id))
-
-    // Cleanup inactive connections
-    cleanupInactiveConnections(activeIds)
 
     // Merge all connections
     mergeAllConnections(activeConns)
