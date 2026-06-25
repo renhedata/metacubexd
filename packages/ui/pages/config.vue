@@ -253,6 +253,31 @@ const isError = computed(() => isErrorConfig.value || isErrorVersion.value)
 
 // Active section for mobile tabs
 const activeSection = ref<'core' | 'xd' | 'tools'>('core')
+
+// Collector health probe
+const collectorHealth = ref<'idle' | 'ok' | 'fail'>('idle')
+
+const probeCollector = useDebounceFn(async () => {
+  const base = configStore.collectorURL.replace(/\/$/, '')
+  if (!configStore.enableBackgroundCollector || !base) {
+    collectorHealth.value = 'idle'
+    return
+  }
+  try {
+    const res = await fetch(`${base}/api/health`)
+    collectorHealth.value = res.ok ? 'ok' : 'fail'
+  } catch {
+    collectorHealth.value = 'fail'
+  }
+}, 500)
+
+watch(
+  () => [configStore.enableBackgroundCollector, configStore.collectorURL],
+  () => {
+    void probeCollector()
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
@@ -774,16 +799,71 @@ const activeSection = ref<'core' | 'xd' | 'tools'>('core')
               >
                 <div class="flex flex-col gap-0.5">
                   <span class="text-sm">{{
-                    t('enableDataUsageTracking')
+                    t('enableBackgroundCollector')
                   }}</span>
                   <span class="text-xs opacity-50">{{
-                    t('enableDataUsageTrackingDesc')
+                    t('enableBackgroundCollectorDesc')
                   }}</span>
                 </div>
                 <input
-                  v-model="configStore.enableDataUsageTracking"
+                  v-model="configStore.enableBackgroundCollector"
                   type="checkbox"
                   class="toggle toggle-primary"
+                />
+              </div>
+
+              <div
+                v-if="configStore.enableBackgroundCollector"
+                class="flex flex-col gap-2 rounded-lg px-2 py-1.5"
+              >
+                <label class="flex flex-col gap-1">
+                  <span class="text-xs opacity-70">{{
+                    t('collectorURL')
+                  }}</span>
+                  <input
+                    v-model="configStore.collectorURL"
+                    type="url"
+                    required
+                    :placeholder="t('collectorURLPlaceholder')"
+                    class="input-bordered input input-sm w-full"
+                  />
+                  <span class="text-xs opacity-40">{{
+                    t('collectorURLHint')
+                  }}</span>
+                </label>
+                <label class="flex flex-col gap-1">
+                  <span class="text-xs opacity-70">{{
+                    t('collectorToken')
+                  }}</span>
+                  <input
+                    v-model="configStore.collectorToken"
+                    type="password"
+                    required
+                    class="input-bordered input input-sm w-full"
+                  />
+                </label>
+                <span
+                  v-if="
+                    !configStore.collectorURL || !configStore.collectorToken
+                  "
+                  class="text-xs text-warning"
+                >
+                  {{ t('collectorConfigIncomplete') }}
+                </span>
+                <span
+                  v-else-if="collectorHealth === 'ok'"
+                  class="text-xs text-success"
+                >
+                  {{ t('collectorHealthOk') }}
+                </span>
+                <span
+                  v-else-if="collectorHealth === 'fail'"
+                  class="text-xs text-error"
+                >
+                  {{ t('collectorHealthFail') }}
+                </span>
+                <CollectorBackends
+                  v-if="configStore.collectorURL && configStore.collectorToken"
                 />
               </div>
 

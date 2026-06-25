@@ -15,6 +15,10 @@
     "build:desktop": "pnpm --filter @metacubexd/desktop... build",
     "build": "pnpm build:ui && pnpm build:server",
     "typecheck": "pnpm -r typecheck",
+    "typecheck:collector": "tsc -p collector/tsconfig.json",
+    "collector": "tsx collector/index.ts",
+    "build:collector": "esbuild collector/index.ts --bundle --platform=node --format=esm --outfile=dist/collector/index.mjs",
+    "test:collector": "vitest run collector/",
     "lint": "pnpm -r lint",
     "prepare:husky": "husky",
     "prepare": "husky"
@@ -23,6 +27,11 @@
     "husky": "catalog:",
     "commitlint": "catalog:",
     "@commitlint/config-conventional": "catalog:",
-    "lint-staged": "catalog:"
+    "lint-staged": "catalog:",
+    "@types/node": "catalog:",
+    "esbuild": "^0.25.0",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3",
+    "vitest": "catalog:"
   }
 }

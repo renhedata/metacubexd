@@ -164,15 +164,19 @@ export const useConfigStore = defineStore('config', () => {
   // Overview settings
   const showNetworkTopology = useLocalStorage('showNetworkTopology', false)
 
-  // Data usage tracking. When enabled, every connections WebSocket message is
-  // diffed per-connection and buffered into IndexedDB so the Data Usage page
-  // can show historical stats. This is a metacubexd-only feature that runs on
-  // EVERY page (the connections socket is global); turning it off removes the
-  // largest piece of per-second background work for users who don't need it.
-  const enableDataUsageTracking = useLocalStorage(
-    'enableDataUsageTracking',
-    true,
+  // Background collector. When enabled, the Data Usage page reads historical
+  // stats from a standalone collector daemon (over HTTP) instead of IndexedDB.
+  // The daemon runs independently of the browser, so stats keep accruing even
+  // when the browser is fully closed. See collector/ and the design spec.
+  const enableBackgroundCollector = useLocalStorage(
+    'enableBackgroundCollector',
+    false,
   )
+  // Address + API key of the standalone collector service (required when the
+  // feature is enabled). Typically a domain mapped by a reverse proxy to the
+  // collector container, e.g. https://collector.example.com.
+  const collectorURL = useLocalStorage('collectorURL', '')
+  const collectorToken = useLocalStorage('collectorToken', '')
 
   // Proxies: in-group node name filter (case-insensitive substring on node name)
   const proxiesGroupNameFilter = useLocalStorage('proxiesGroupNameFilter', '')
@@ -309,8 +313,10 @@ export const useConfigStore = defineStore('config', () => {
     favNightTheme.value = 'sunset'
     curTheme.value = 'sunset'
     defaultPage.value = 'overview'
+    enableBackgroundCollector.value = false
+    collectorURL.value = ''
+    collectorToken.value = ''
     onboardingDismissed.value = false
-    enableDataUsageTracking.value = true
     backgroundImageType.value = 'none'
     backgroundImageUrl.value = ''
     backgroundBlur.value = 0
@@ -370,7 +376,9 @@ export const useConfigStore = defineStore('config', () => {
     // Overview
     showNetworkTopology,
     // Data usage
-    enableDataUsageTracking,
+    enableBackgroundCollector,
+    collectorURL,
+    collectorToken,
     // Proxies in-group filter & alphabet index
     proxiesGroupNameFilter,
     enableProxiesAlphabetIndex,

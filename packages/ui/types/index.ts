@@ -215,6 +215,31 @@ export type DataUsageType =
   | 'outbound'
   | 'inboundUser'
 
+export type DataUsageGroupBy = DataUsageType | 'time'
+
+export interface DataUsageFilters {
+  sourceIP?: string
+  host?: string
+  outbound?: string
+  process?: string
+  inboundUser?: string
+}
+
+export interface AggregateQuery {
+  start: number
+  end: number
+  groupBy: DataUsageGroupBy
+  filters?: DataUsageFilters
+  bucketMs?: number
+}
+
+export interface AggregateRow {
+  label: string | number
+  upload: number
+  download: number
+  count: number
+}
+
 export interface DataUsageEntry {
   type: DataUsageType
   label: string

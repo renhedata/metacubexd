@@ -56,7 +56,8 @@
     "vite": "catalog:",
     "vue": "catalog:",
     "vue-router": "catalog:",
-    "vue-sonner": "catalog:"
+    "vue-sonner": "catalog:",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@antfu/eslint-config": "catalog:",
