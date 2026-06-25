@@ -1,10 +1,12 @@
 import type { IncomingMessage, Server, ServerResponse } from 'node:http'
 import type { BackendManager } from './backends'
 import type { Store } from './store'
+import type { Dimension, GroupBy } from './types'
 import { Buffer } from 'node:buffer'
 import { timingSafeEqual } from 'node:crypto'
 import { createServer as createHttpServer } from 'node:http'
 import { normalizeBackend } from './backends'
+import { DIMENSIONS } from './types'
 
 const MAX_BODY_BYTES = 64 * 1024
 
@@ -72,6 +74,15 @@ export function createServer(opts: ServerOptions): Server {
     }
   }
 
+  const FILTER_PARAMS: Record<string, Dimension> = {
+    fSourceIP: 'sourceIP',
+    fHost: 'host',
+    fOutbound: 'outbound',
+    fProcess: 'process',
+    fInboundUser: 'inboundUser',
+  }
+  const GROUP_BYS = new Set<string>([...DIMENSIONS, 'time'])
+
   return createHttpServer(async (req, res) => {
     setCors(res)
 
@@ -136,6 +147,52 @@ export function createServer(opts: ServerOptions): Server {
         const end =
           Number.isFinite(endParam) && endParam > 0 ? endParam : Date.now()
         json(res, 200, store.query(backend, start, end))
+        return
+      }
+
+      if (req.method === 'GET' && url.pathname === '/api/aggregate') {
+        const backend = backendParam(url, 'backend')
+        if (!backend) {
+          json(res, 400, { error: 'backend is required' })
+          return
+        }
+        const groupBy = url.searchParams.get('groupBy') ?? ''
+        if (!GROUP_BYS.has(groupBy)) {
+          json(res, 400, { error: 'invalid groupBy' })
+          return
+        }
+        const start = Math.max(0, Number(url.searchParams.get('start')) || 0)
+        const endParam = Number(url.searchParams.get('end'))
+        const end =
+          Number.isFinite(endParam) && endParam > 0 ? endParam : Date.now()
+
+        let bucketMs: number | undefined
+        if (groupBy === 'time') {
+          const b = Number(url.searchParams.get('bucket'))
+          if (!Number.isFinite(b) || b <= 0) {
+            json(res, 400, { error: 'bucket is required for time grouping' })
+            return
+          }
+          bucketMs = b
+        }
+
+        const filters: Partial<Record<Dimension, string>> = {}
+        for (const [param, dim] of Object.entries(FILTER_PARAMS)) {
+          const v = url.searchParams.get(param)
+          if (v !== null) filters[dim] = v
+        }
+
+        json(
+          res,
+          200,
+          store.aggregate(backend, {
+            start,
+            end,
+            groupBy: groupBy as GroupBy,
+            filters,
+            bucketMs,
+          }),
+        )
         return
       }
 

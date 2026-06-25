@@ -223,4 +223,73 @@ describe('collector/server', () => {
     })
     expect(res.status).toBe(413)
   })
+
+  it('rejects /api/aggregate without a token', async () => {
+    const res = await fetch(`${base}/api/aggregate?backend=${A}&groupBy=host`)
+    expect(res.status).toBe(401)
+  })
+
+  it('rejects /api/aggregate without a backend', async () => {
+    const res = await fetch(`${base}/api/aggregate?groupBy=host`, {
+      headers: auth,
+    })
+    expect(res.status).toBe(400)
+  })
+
+  it('rejects /api/aggregate with an invalid groupBy', async () => {
+    const res = await fetch(
+      `${base}/api/aggregate?backend=${encodeURIComponent(A)}&groupBy=nope`,
+      {
+        headers: auth,
+      },
+    )
+    expect(res.status).toBe(400)
+  })
+
+  it('rejects /api/aggregate groupBy=time without a bucket', async () => {
+    const res = await fetch(
+      `${base}/api/aggregate?backend=${encodeURIComponent(A)}&groupBy=time`,
+      {
+        headers: auth,
+      },
+    )
+    expect(res.status).toBe(400)
+  })
+
+  it('aggregates by dimension and honours filters', async () => {
+    store.insertLogs(A, [
+      makeLog({ host: 'a.com', outbound: 'PROXY', upload: 10, download: 1 }),
+      makeLog({ host: 'b.com', outbound: 'PROXY', upload: 7, download: 1 }),
+      makeLog({ host: 'a.com', outbound: 'DIRECT', upload: 3, download: 1 }),
+    ])
+
+    const res = await fetch(
+      `${base}/api/aggregate?backend=${encodeURIComponent(A)}&start=0&end=100000&groupBy=host&fOutbound=PROXY`,
+      { headers: auth },
+    )
+
+    expect(res.status).toBe(200)
+    const rows = (await res.json()) as { label: string; upload: number }[]
+    expect(rows.map((r) => r.label).sort()).toEqual(['a.com', 'b.com'])
+    expect(rows.find((r) => r.label === 'a.com')!.upload).toBe(10)
+  })
+
+  it('aggregates by time bucket', async () => {
+    store.insertLogs(A, [
+      makeLog({ timestamp: 500, upload: 1 }),
+      makeLog({ timestamp: 1500, upload: 2 }),
+    ])
+
+    const res = await fetch(
+      `${base}/api/aggregate?backend=${encodeURIComponent(A)}&start=0&end=10000&groupBy=time&bucket=1000`,
+      { headers: auth },
+    )
+
+    expect(res.status).toBe(200)
+    const rows = (await res.json()) as { label: number; upload: number }[]
+    expect(rows).toEqual([
+      { label: 0, upload: 1, download: 200, count: 1 },
+      { label: 1000, upload: 2, download: 200, count: 1 },
+    ])
+  })
 })
