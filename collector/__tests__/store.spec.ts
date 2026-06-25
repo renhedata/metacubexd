@@ -108,6 +108,89 @@ describe('collector/store', () => {
     expect(store.count()).toBe(0)
   })
 
+  it('aggregates by a dimension with SUM and COUNT', () => {
+    store.insertLogs(A, [
+      makeLog({ outbound: 'PROXY', upload: 10, download: 20 }),
+      makeLog({ outbound: 'PROXY', upload: 5, download: 5 }),
+      makeLog({ outbound: 'DIRECT', upload: 1, download: 2 }),
+    ])
+
+    const rows = store.aggregate(A, {
+      start: 0,
+      end: 100000,
+      groupBy: 'outbound',
+    })
+    const byLabel = Object.fromEntries(rows.map((r) => [r.label, r]))
+
+    expect(byLabel.PROXY).toMatchObject({ upload: 15, download: 25, count: 2 })
+    expect(byLabel.DIRECT).toMatchObject({ upload: 1, download: 2, count: 1 })
+  })
+
+  it('applies equality filters before grouping', () => {
+    store.insertLogs(A, [
+      makeLog({ host: 'a.com', outbound: 'PROXY', upload: 10 }),
+      makeLog({ host: 'b.com', outbound: 'PROXY', upload: 7 }),
+      makeLog({ host: 'a.com', outbound: 'DIRECT', upload: 3 }),
+    ])
+
+    const rows = store.aggregate(A, {
+      start: 0,
+      end: 100000,
+      groupBy: 'host',
+      filters: { outbound: 'PROXY' },
+    })
+
+    expect(rows.map((r) => r.label).sort()).toEqual(['a.com', 'b.com'])
+    expect(rows.find((r) => r.label === 'a.com')!.upload).toBe(10)
+  })
+
+  it('buckets by time with integer division', () => {
+    store.insertLogs(A, [
+      makeLog({ timestamp: 500, upload: 1 }),
+      makeLog({ timestamp: 1500, upload: 2 }),
+      makeLog({ timestamp: 1700, upload: 4 }),
+    ])
+
+    const rows = store.aggregate(A, {
+      start: 0,
+      end: 10000,
+      groupBy: 'time',
+      bucketMs: 1000,
+    })
+
+    expect(rows.map((r) => [Number(r.label), r.upload])).toEqual([
+      [0, 1],
+      [1000, 6],
+    ])
+  })
+
+  it('scopes aggregation to the requested backend', () => {
+    store.insertLogs(A, [makeLog({ outbound: 'PROXY', upload: 10 })])
+    store.insertLogs(B, [makeLog({ outbound: 'PROXY', upload: 99 })])
+
+    const rows = store.aggregate(A, {
+      start: 0,
+      end: 100000,
+      groupBy: 'outbound',
+    })
+    expect(rows).toEqual([
+      { label: 'PROXY', upload: 10, download: 200, count: 1 },
+    ])
+  })
+
+  it('returns an empty array for a range with no rows', () => {
+    store.insertLogs(A, [makeLog({ timestamp: 60000 })])
+    expect(store.aggregate(A, { start: 0, end: 100, groupBy: 'host' })).toEqual(
+      [],
+    )
+  })
+
+  it('throws when grouping by time without a bucket', () => {
+    expect(() =>
+      store.aggregate(A, { start: 0, end: 1, groupBy: 'time' }),
+    ).toThrow()
+  })
+
   it('migrates a v1 database: adds the backend column, keeps legacy rows', () => {
     const dir = mkdtempSync(join(tmpdir(), 'collector-store-'))
     const dbPath = join(dir, 'v1.sqlite')

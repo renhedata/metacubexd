@@ -1,5 +1,11 @@
-import type { DataUsageLog } from './types'
+import type {
+  AggregateQuery,
+  AggregateRow,
+  DataUsageLog,
+  Dimension,
+} from './types'
 import { DatabaseSync } from 'node:sqlite'
+import { DIMENSIONS } from './types'
 
 export interface BackendRow {
   url: string
@@ -10,6 +16,7 @@ export interface BackendRow {
 export interface Store {
   insertLogs: (backend: string, logs: DataUsageLog[]) => void
   query: (backend: string, start: number, end: number) => DataUsageLog[]
+  aggregate: (backend: string, query: AggregateQuery) => AggregateRow[]
   clearBackend: (backend: string) => void
   upsertBackend: (url: string, secret: string) => void
   removeBackend: (backend: string) => void
@@ -115,6 +122,50 @@ export function createStore(dbPath: string): Store {
     },
     query(backend, start, end) {
       return queryStmt.all(backend, start, end) as unknown as DataUsageLog[]
+    },
+    aggregate(backend, query) {
+      const { start, end, groupBy, filters = {}, bucketMs } = query
+
+      const where = ['backend = ?', 'timestamp >= ?', 'timestamp <= ?']
+      const whereParams: (string | number)[] = [backend, start, end]
+      for (const dim of DIMENSIONS) {
+        const v = filters[dim as Dimension]
+        if (v !== undefined) {
+          where.push(`${dim} = ?`)
+          whereParams.push(v)
+        }
+      }
+      const whereSql = where.join(' AND ')
+
+      if (groupBy === 'time') {
+        if (!bucketMs || bucketMs <= 0) {
+          throw new Error('bucketMs is required for time grouping')
+        }
+        const sql = `SELECT CAST(timestamp / ? AS INTEGER) * ? AS label,
+                            SUM(upload) AS upload, SUM(download) AS download, COUNT(*) AS count
+                       FROM data_usage_logs
+                      WHERE ${whereSql}
+                      GROUP BY CAST(timestamp / ? AS INTEGER)
+                      ORDER BY label ASC`
+        return db
+          .prepare(sql)
+          .all(
+            bucketMs,
+            bucketMs,
+            ...whereParams,
+            bucketMs,
+          ) as unknown as AggregateRow[]
+      }
+
+      if (!DIMENSIONS.includes(groupBy as Dimension)) {
+        throw new Error(`invalid groupBy: ${groupBy}`)
+      }
+      const sql = `SELECT ${groupBy} AS label,
+                          SUM(upload) AS upload, SUM(download) AS download, COUNT(*) AS count
+                     FROM data_usage_logs
+                    WHERE ${whereSql}
+                    GROUP BY ${groupBy}`
+      return db.prepare(sql).all(...whereParams) as unknown as AggregateRow[]
     },
     clearBackend(backend) {
       clearBackendStmt.run(backend)

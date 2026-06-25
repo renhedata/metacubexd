@@ -38,3 +38,29 @@ export interface ConnectionsMessage {
   uploadTotal?: number
   downloadTotal?: number
 }
+
+export const DIMENSIONS = [
+  'sourceIP',
+  'host',
+  'outbound',
+  'process',
+  'inboundUser',
+] as const
+
+export type Dimension = (typeof DIMENSIONS)[number]
+export type GroupBy = Dimension | 'time'
+
+export interface AggregateQuery {
+  start: number
+  end: number
+  groupBy: GroupBy
+  filters?: Partial<Record<Dimension, string>>
+  bucketMs?: number
+}
+
+export interface AggregateRow {
+  label: string | number
+  upload: number
+  download: number
+  count: number
+}
