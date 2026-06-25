@@ -13,23 +13,16 @@ RUN corepack enable
 RUN corepack install
 RUN pnpm install
 RUN pnpm build
-# Bundle the zero-dependency collector daemon into a single .mjs (run by plain node).
-RUN pnpm build:collector
 
 FROM docker.io/node:alpine
 
 ENV PORT=80
-# 80 = dashboard (default CMD); 9797 = collector (compose command override).
-# Reverse proxies like Coolify use EXPOSE to auto-detect mappable ports.
-EXPOSE 80 9797
+EXPOSE 80
 
 WORKDIR /app
 
-# Dashboard (Nuxt server output) + the bundled background-traffic collector.
-# The default CMD runs the dashboard; the collector is started by overriding the
-# command (see docker-compose.yml): node /app/collector/index.mjs
+# Copy the entire Nuxt server output
 COPY --from=builder /build/.output ./.output
-COPY --from=builder /build/dist/collector ./collector
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 
