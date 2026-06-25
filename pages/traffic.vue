@@ -137,6 +137,13 @@ watch(
   { immediate: true },
 )
 
+// When the collector becomes ready while the page is open (e.g. the user just
+// configured it in Settings), load data — the view/time-range watchers won't
+// have fired on their own.
+watch(isCollectorReady, (ready) => {
+  if (ready) fetchData()
+})
+
 // Enable window focus refetch for traffic data with throttling
 watch(
   useWindowFocus(),
