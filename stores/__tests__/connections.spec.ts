@@ -4,27 +4,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick, reactive } from 'vue'
 import { useConnectionsStore } from '../connections'
 
-const localStorageMock = (() => {
-  let store: Record<string, string> = {}
-  return {
-    getItem: (key: string) => store[key] ?? null,
-    setItem: (key: string, value: string) => {
-      store[key] = value
-    },
-    removeItem: (key: string) => {
-      delete store[key]
-    },
-    clear: () => {
-      store = {}
-    },
-    get length() {
-      return Object.keys(store).length
-    },
-    key: (i: number) => Object.keys(store)[i] ?? null,
-  }
-})()
-vi.stubGlobal('localStorage', localStorageMock)
-
 const mockGlobalStore = { clearChartHistory: vi.fn() }
 const mockEndpointStore = reactive({ selectedEndpoint: 'endpoint-a' })
 
@@ -60,7 +39,6 @@ describe('stores/connections restart detection vs endpoint switch', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
-    localStorageMock.clear()
     mockEndpointStore.selectedEndpoint = 'endpoint-a'
   })
 
