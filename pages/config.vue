@@ -579,24 +579,6 @@ watch(
               >
                 <div class="flex flex-col gap-0.5">
                   <span class="text-sm">{{
-                    t('enableDataUsageTracking')
-                  }}</span>
-                  <span class="text-xs opacity-50">{{
-                    t('enableDataUsageTrackingDesc')
-                  }}</span>
-                </div>
-                <input
-                  v-model="configStore.enableDataUsageTracking"
-                  type="checkbox"
-                  class="toggle toggle-primary"
-                />
-              </div>
-
-              <div
-                class="flex items-center justify-between gap-4 rounded-lg px-2 py-1.5 transition-colors hover:bg-base-content/5"
-              >
-                <div class="flex flex-col gap-0.5">
-                  <span class="text-sm">{{
                     t('enableBackgroundCollector')
                   }}</span>
                   <span class="text-xs opacity-50">{{
