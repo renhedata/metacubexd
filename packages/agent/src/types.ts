@@ -1,9 +1,5 @@
 export type KernelStatus =
-  | 'stopped'
-  | 'starting'
-  | 'running'
-  | 'stopping'
-  | 'errored'
+  'stopped' | 'starting' | 'running' | 'stopping' | 'errored'
 
 export interface KernelState {
   status: KernelStatus
@@ -22,6 +18,7 @@ export interface SupervisorOptions {
   activeConfigPath: string // mihomo -f target (managed by ProfileStore)
   startTimeoutMs?: number // default 10_000
   stopTimeoutMs?: number // default 5_000
+  validateTimeoutMs?: number // default 300_000; first validation may download GEO data
   autoRestart?: boolean // crash watchdog; default true
   maxRestarts?: number // consecutive auto-restarts before giving up; default 3
   restartBackoffMs?: number // delay before each auto-restart; default 1_000
@@ -92,6 +89,11 @@ export interface SystemProxyController {
   setAutoProxy: (url: string) => Promise<void>
   disableAutoProxy: () => Promise<void>
   describe: () => { port: number; bypass: string[] }
+  // Optional: record `bypass` as the default list future enables apply (and the
+  // impl may persist it). The control route calls this for EVERY apply carrying
+  // a bypass — including one made while the proxy is off, which would otherwise
+  // evaporate because disable() takes no list.
+  setDefaultBypass?: (bypass: string[]) => void
 }
 
 export type ProfileType = 'local' | 'remote' | 'merge' | 'script'
@@ -104,6 +106,11 @@ export interface ProfileMeta {
   url?: string
   userAgent?: string
   updateInterval?: number // minutes; only meaningful for remote profiles
+  // Managed merge overlays may be scoped to one base profile. Legacy merges
+  // omit this field and remain global.
+  baseProfileId?: string
+  managedBy?: 'visual-editor'
+  editorStatus?: 'clean' | 'conflicted'
   updatedAt: number
   subscriptionInfo?: {
     upload: number
@@ -120,10 +127,21 @@ export interface ProfileStore {
     name: string
     content?: string
     type?: 'local' | 'merge' | 'script'
+    baseProfileId?: string
+    managedBy?: 'visual-editor'
+    editorStatus?: 'clean' | 'conflicted'
   }) => Promise<ProfileMeta>
   update: (
     id: string,
-    p: { name?: string; content?: string; enabled?: boolean },
+    p: {
+      name?: string
+      content?: string
+      enabled?: boolean
+      // minutes; only meaningful for remote profiles (drives the scheduler).
+      // 0 disables auto-update; omit leaves the stored value untouched.
+      updateInterval?: number
+      editorStatus?: 'clean' | 'conflicted' | null
+    },
   ) => Promise<ProfileMeta>
   delete: (id: string) => Promise<void>
   duplicate: (id: string, name?: string) => Promise<ProfileMeta>
@@ -131,6 +149,18 @@ export interface ProfileStore {
   refresh: (id: string) => Promise<ProfileMeta> // re-fetch a remote profile in place
   getActiveId: () => Promise<string | undefined>
   setActive: (id: string) => Promise<void> // validate + write activeConfigPath
+  // Compose a base with its enabled merge/script layers. Overrides are used by
+  // the visual editor to preview without mutating disk.
+  compose: (
+    id: string,
+    overrides?: { profileContent?: string; managedOverlayContent?: string },
+  ) => Promise<{ content: string; composition: ProfileMeta[] }>
+  // Restore the last-known-good active config (activeConfigPath.bak written by
+  // the previous setActive). Returns false when no backup exists (#2109).
+  rollback: () => Promise<boolean>
+  // Clear the active config to a minimal (header-only) file and drop activeId so
+  // a broken persisted config can't keep bricking the kernel on boot (#2109).
+  resetActive: () => Promise<void>
   // Read a single top-level key from a profile's parsed YAML (null if absent /
   // the content is not a mapping).
   getSection: (id: string, key: string) => Promise<unknown>

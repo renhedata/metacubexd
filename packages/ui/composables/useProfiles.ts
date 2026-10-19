@@ -5,7 +5,11 @@ import type {
   ProfileMeta,
   ValidateResult,
 } from '~/types/control'
+import { useQueryClient } from '@tanstack/vue-query'
 import { toast } from 'vue-sonner'
+import { queryKeys } from '~/composables/useQueries'
+import { DEFAULT_SCRIPT_CONTENT } from '~/constants'
+import { controlErrorMessage } from '~/utils/controlError'
 import { useControlApi } from './useControlApi'
 
 // `useI18n` is auto-imported by @nuxtjs/i18n (no explicit import). In unit
@@ -18,6 +22,7 @@ declare function useProxiesStore(): { closeAllConnections: () => Promise<void> }
 
 export function useProfiles() {
   const api = useControlApi()
+  const queryClient = useQueryClient()
   const proxiesStore = useProxiesStore()
   const { t } = useI18n()
   const profiles = ref<ProfileMeta[]>([])
@@ -38,14 +43,29 @@ export function useProfiles() {
   )
 
   // The last activated non-merge base — needed to re-compose the active config
-  // after a merge overlay is toggled or edited. Undefined until the user
-  // activates a base this session (the agent does not expose the active id).
+  // after a merge overlay is toggled or edited. Seeded from the agent's recorded
+  // active id (GET /profiles carries an `active` flag on the active base) so the
+  // badge survives a reload instead of resetting to "none active" each session
+  // (#2148).
   const activeBaseId = ref<string | undefined>(undefined)
 
   const refresh = async () => {
     loading.value = true
     try {
       profiles.value = await api.listProfiles()
+      // Sync the active marker from the source of truth so activation done
+      // outside this page (tray, AIO scheduler, a prior session) is reflected.
+      const active = profiles.value.find(
+        (p) => p.active && p.type !== 'merge' && p.type !== 'script',
+      )
+      if (active) {
+        activeBaseId.value = active.id
+      } else if (profiles.value.some((p) => p.active === false)) {
+        // The backend explicitly reports no active base (entries carry the
+        // `active` flag, none true) — clear the marker. Skip when the flag is
+        // absent entirely (older backends) so a known-active id is preserved.
+        activeBaseId.value = undefined
+      }
     } finally {
       loading.value = false
     }
@@ -64,8 +84,12 @@ export function useProfiles() {
     await create({ name, type: 'merge' })
   }
   // Mint a new script transform (JS run after merges during composition).
+  // Seed it with a working identity transform so the contract is obvious:
+  // unlike Clash Verge / FlClash (which expose `main()`), mihomo's script
+  // profile must export a function (config) => config — without this, a newly
+  // created script is an empty file that errors on first compose (#2155).
   const createScript = async (name: string) => {
-    await create({ name, type: 'script' })
+    await create({ name, type: 'script', content: DEFAULT_SCRIPT_CONTENT })
   }
   const duplicate = async (id: string, name?: string) => {
     await api.duplicateProfile(id, name)
@@ -92,7 +116,25 @@ export function useProfiles() {
       return true
     } catch (e) {
       toast.error(t('profilesRefreshFailed'), {
-        description: e instanceof Error ? e.message : String(e),
+        description: controlErrorMessage(e),
+      })
+      return false
+    }
+  }
+  // Refresh + apply: re-fetch the subscription AND re-compose it into the active
+  // config + restart the kernel so the new nodes/rules actually route (#2108).
+  // Distinct from refreshRemote (which only updates storage). A failed validation
+  // surfaces as a toast; the agent restores the prior config in that case.
+  const refreshAndApply = async (id: string): Promise<boolean> => {
+    try {
+      await api.refreshAndActivateProfile(id)
+      await queryClient.invalidateQueries({ queryKey: queryKeys.config })
+      await refresh()
+      toast.success(t('profilesRefreshed'))
+      return true
+    } catch (e) {
+      toast.error(t('profilesRefreshFailed'), {
+        description: controlErrorMessage(e),
       })
       return false
     }
@@ -101,12 +143,23 @@ export function useProfiles() {
     await api.updateProfile(id, { content })
     await refresh()
   }
+  // Persist a remote profile's auto-update interval (minutes; 0 disables). The
+  // AIO server scheduler refreshes remote profiles whose interval has elapsed;
+  // a refreshed active profile re-composes + restarts automatically (#2107).
+  const setUpdateInterval = async (id: string, minutes: number) => {
+    await api.updateProfile(id, { updateInterval: minutes })
+    await refresh()
+  }
   const load = (id: string): Promise<ProfileDetail> => api.getProfile(id)
   const validate = (id: string): Promise<ValidateResult> =>
     api.validateProfile(id)
   const activate = async (id: string): Promise<KernelState> => {
     const state = await api.activateProfile(id)
     activeBaseId.value = id
+    // Profile activation restarts mihomo with a potentially different `mode`.
+    // Invalidate the shared /configs query so the config page cannot keep
+    // rendering its pre-activation cached mode while the sidebar is live (#2137).
+    await queryClient.invalidateQueries({ queryKey: queryKeys.config })
     await refresh()
     // A profile switch can re-route any connection, so drop the existing ones
     // (when the user opted into autoCloseConns) for the change to take effect
@@ -123,6 +176,7 @@ export function useProfiles() {
       return
     }
     await api.activateProfile(activeBaseId.value)
+    await queryClient.invalidateQueries({ queryKey: queryKeys.config })
   }
 
   // Enable/disable a merge overlay, then re-compose the active config so the
@@ -134,7 +188,7 @@ export function useProfiles() {
       await recompose()
     } catch (e) {
       toast.error(t('profilesMergeUpdateFailed'), {
-        description: e instanceof Error ? e.message : String(e),
+        description: controlErrorMessage(e),
       })
     }
   }
@@ -147,7 +201,7 @@ export function useProfiles() {
       await recompose()
     } catch (e) {
       toast.error(t('profilesMergeUpdateFailed'), {
-        description: e instanceof Error ? e.message : String(e),
+        description: controlErrorMessage(e),
       })
     }
   }
@@ -161,7 +215,7 @@ export function useProfiles() {
       await recompose()
     } catch (e) {
       toast.error(t('profilesScriptUpdateFailed'), {
-        description: e instanceof Error ? e.message : String(e),
+        description: controlErrorMessage(e),
       })
     }
   }
@@ -174,7 +228,7 @@ export function useProfiles() {
       await recompose()
     } catch (e) {
       toast.error(t('profilesScriptUpdateFailed'), {
-        description: e instanceof Error ? e.message : String(e),
+        description: controlErrorMessage(e),
       })
     }
   }
@@ -194,11 +248,13 @@ export function useProfiles() {
     remove,
     importUrl,
     refreshRemote,
+    refreshAndApply,
     save,
     saveMerge,
     saveScript,
     setEnabled,
     setScriptEnabled,
+    setUpdateInterval,
     load,
     validate,
     activate,

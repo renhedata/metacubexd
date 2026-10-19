@@ -4,7 +4,6 @@ import {
   IconBolt,
   IconChevronRight,
   IconRouter,
-  IconSearch,
   IconTarget,
   IconWorld,
   IconX,
@@ -13,7 +12,6 @@ import {
   filterNodesByCapability,
   filterNodesByRegion,
   filterNodesByType,
-  filterProxiesByName,
   formatProxyType,
   getCapabilityFacets,
   getRegionFacets,
@@ -27,6 +25,9 @@ interface Props {
 }
 
 const props = defineProps<Props>()
+const emit = defineEmits<{
+  scroll: [event: Event]
+}>()
 
 const proxiesStore = useProxiesStore()
 const { t } = useI18n()
@@ -49,7 +50,6 @@ const activeNodes = computed(() =>
 )
 
 // --- Local workbench state (scoped to the active group; reset on switch) ---
-const localKeyword = ref('')
 const selectedRegions = ref<Set<string>>(new Set())
 const selectedTypes = ref<Set<string>>(new Set())
 const filterUdp = ref(false)
@@ -85,17 +85,14 @@ const hasActiveFilter = computed(
 )
 
 const displayNodes = computed(() =>
-  filterProxiesByName(
-    filterNodesByCapability(
-      filterNodesByType(
-        filterNodesByRegion(activeNodes.value, selectedRegions.value),
-        selectedTypes.value,
-        metaOf,
-      ),
-      { udp: filterUdp.value, xudp: filterXudp.value },
+  filterNodesByCapability(
+    filterNodesByType(
+      filterNodesByRegion(activeNodes.value, selectedRegions.value),
+      selectedTypes.value,
       metaOf,
     ),
-    localKeyword.value,
+    { udp: filterUdp.value, xudp: filterXudp.value },
+    metaOf,
   ),
 )
 
@@ -131,18 +128,25 @@ function chipClass(active: boolean) {
   ]
 }
 
-// Scroll container for the right detail; the selected row carries
-// data-selected="true" (a fallthrough attr on ProxyNodeListItem's root).
-const detailEl = ref<HTMLElement | null>(null)
+// On mobile the page scrolls; on desktop only the node list scrolls so the
+// group title and filters remain fixed at the top of the detail pane.
+// The selected row carries data-selected="true" (a fallthrough attr on
+// ProxyNodeListItem's root).
+const nodeListEl = ref<HTMLElement | null>(null)
 function scrollSelectedIntoView(behavior: ScrollBehavior = 'smooth') {
-  detailEl.value
+  nodeListEl.value
     ?.querySelector('[data-selected="true"]')
     ?.scrollIntoView({ block: 'center', behavior })
 }
 
+function scrollToTop(behavior: ScrollBehavior = 'smooth') {
+  nodeListEl.value?.scrollTo({ top: 0, behavior })
+}
+
+defineExpose({ scrollToTop })
+
 // On group switch: reset local filters and reveal the selected node.
 watch(activeName, () => {
-  localKeyword.value = ''
   clearFilters()
   nextTick(() => scrollSelectedIntoView('auto'))
 })
@@ -158,7 +162,7 @@ function aliveCount(group: ProxyType) {
 </script>
 
 <template>
-  <div class="flex h-full min-h-0 flex-col gap-3 sm:flex-row">
+  <div class="flex min-h-0 flex-col gap-3 sm:h-full sm:flex-row">
     <!-- Group navigation: horizontal strip on mobile, left rail on >=sm -->
     <div
       class="flex shrink-0 gap-1 overflow-x-auto pb-1 sm:w-48 sm:flex-col sm:overflow-x-visible sm:overflow-y-auto sm:pb-0"
@@ -190,58 +194,32 @@ function aliveCount(group: ProxyType) {
     <!-- Right detail: active group's nodes + workbench bar -->
     <div
       v-if="activeGroup"
-      ref="detailEl"
-      class="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto rounded-xl border border-base-content/8 bg-base-200/40"
+      class="flex min-w-0 flex-col rounded-xl border border-base-content/8 bg-base-200/40 sm:min-h-0 sm:flex-1 sm:overflow-hidden"
     >
-      <!-- Sticky header: title + search + jump + region chips.
-           z-20 keeps it above a selected node row (its wrapper is z-10 and its
-           glow/elevation would otherwise bleed up over the region chips). -->
       <div
-        class="sticky top-0 z-20 flex flex-col gap-2 rounded-t-xl border-b border-base-content/8 bg-base-200/95 px-3 pt-3 pb-2 backdrop-blur-sm"
+        data-testid="master-detail-header"
+        class="flex shrink-0 flex-col gap-2 rounded-t-xl border-b border-base-content/8 bg-base-200/95 px-3 pt-3 pb-2"
       >
-        <div class="flex items-center gap-2">
-          <span class="text-lg font-semibold text-base-content">{{
-            activeGroup.name
-          }}</span>
-          <span
-            class="badge inline-flex items-center gap-1 badge-sm badge-primary"
-          >
-            <span class="font-bold">{{
-              formatProxyType(activeGroup.type, t)
+        <div class="flex min-w-0 items-center gap-2">
+          <div class="flex min-w-0 flex-1 items-center gap-2">
+            <span class="truncate text-lg font-semibold text-base-content">{{
+              activeGroup.name
             }}</span>
-            <template v-if="activeGroup.now?.length">
-              <IconChevronRight :size="16" />
-              <span class="whitespace-nowrap">{{ activeGroup.now }}</span>
-            </template>
-          </span>
-        </div>
-
-        <!-- Inline search (local to this group) + jump-to-current -->
-        <div class="flex items-center gap-2">
-          <div
-            class="flex h-8 min-w-0 flex-1 items-center gap-2 rounded-lg border border-base-content/10 bg-base-100/60 px-2.5 transition-all duration-200 focus-within:border-primary/40"
-          >
-            <IconSearch :size="15" class="shrink-0 opacity-50" />
-            <input
-              v-model="localKeyword"
-              type="search"
-              class="w-full bg-transparent text-sm outline-none placeholder:opacity-50"
-              :placeholder="t('search')"
-              :aria-label="t('search')"
-            />
-            <span class="shrink-0 text-xs text-base-content/45">
-              {{ displayNodes.length }}/{{ activeNodes.length }}
-            </span>
-            <button
-              v-if="localKeyword"
-              type="button"
-              class="shrink-0 text-base-content/45 transition-colors hover:text-base-content"
-              :title="t('clear')"
-              @click="localKeyword = ''"
+            <span
+              class="badge inline-flex min-w-0 items-center gap-1 badge-sm badge-primary"
             >
-              <IconX :size="14" />
-            </button>
+              <span class="shrink-0 font-bold">{{
+                formatProxyType(activeGroup.type, t)
+              }}</span>
+              <template v-if="activeGroup.now?.length">
+                <IconChevronRight :size="16" class="shrink-0" />
+                <span class="min-w-0 truncate">{{ activeGroup.now }}</span>
+              </template>
+            </span>
           </div>
+          <span class="shrink-0 text-xs text-base-content/45">
+            {{ displayNodes.length }}/{{ activeNodes.length }}
+          </span>
           <button
             type="button"
             class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-base-content/10 bg-base-100/60 text-base-content/70 transition-all duration-200 hover:border-primary/30 hover:bg-primary/15 hover:text-primary disabled:cursor-not-allowed disabled:opacity-40"
@@ -377,7 +355,12 @@ function aliveCount(group: ProxyType) {
       </div>
 
       <!-- Node list -->
-      <div class="flex flex-col gap-2 px-3 pt-2 pb-3">
+      <div
+        ref="nodeListEl"
+        data-testid="master-detail-scroll-container"
+        class="flex flex-col gap-2 px-3 pt-2 pb-3 sm:min-h-0 sm:flex-1 sm:overflow-y-auto"
+        @scroll.passive="emit('scroll', $event)"
+      >
         <ProxyNodeListItem
           v-for="name in displayNodes"
           :key="name"

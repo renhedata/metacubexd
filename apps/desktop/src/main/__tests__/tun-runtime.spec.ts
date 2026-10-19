@@ -148,18 +148,17 @@ describe('createTunRuntime', () => {
   })
 
   describe('startPrivileged', () => {
-    it('installs the helper when not yet installed, then connects + startKernel — in order (no handshake on a fresh install)', async () => {
+    it('waits for a fresh helper to answer before starting the kernel', async () => {
       const deps = makeDeps({ installed: false })
       const runtime = makeRuntime(deps)
 
       await runtime.deps.startPrivileged()
 
-      // A fresh install is THIS build's helper, so it matches by construction —
-      // no version handshake round-trip is paid.
-      expect(deps.client.getVersion).not.toHaveBeenCalled()
+      expect(deps.client.getVersion).toHaveBeenCalledTimes(1)
       expect(deps.order).toEqual([
         'installer.install',
         'connectClient',
+        'client.getVersion',
         'client.startKernel',
       ])
       expect(deps.client.startKernel).toHaveBeenCalledWith(KERNEL_OPTS)
@@ -201,8 +200,166 @@ describe('createTunRuntime', () => {
       const runtime = makeRuntime(deps)
 
       await expect(runtime.deps.startPrivileged()).rejects.toThrow(
-        /privileged spawn failed/,
+        'privileged spawn failed',
       )
+      expect(deps.client.close).toHaveBeenCalledTimes(1)
+      expect(runtime.isTunMode()).toBe(false)
+    })
+
+    it('closes a failed privileged session before restoring the sidecar', async () => {
+      const deps = makeDeps()
+      vi.mocked(deps.client.startKernel).mockRejectedValueOnce(
+        new Error('privileged spawn failed'),
+      )
+      const runtime = makeRuntime(deps)
+
+      await expect(
+        runtime.controller.enable({ stack: 'gvisor' }),
+      ).rejects.toThrow('privileged spawn failed')
+
+      expect(deps.order.slice(-3)).toEqual([
+        'client.close',
+        'setSection.remove:tun',
+        'supervisor.start',
+      ])
+      expect(await runtime.controller.status()).toEqual({
+        enabled: false,
+        mode: 'sidecar',
+      })
+    })
+
+    it('rejects a helper that reports the kernel is not running', async () => {
+      const deps = makeDeps()
+      vi.mocked(deps.client.startKernel).mockResolvedValueOnce({
+        type: 'startKernel',
+        ok: true,
+        version: '1',
+        running: false,
+      })
+      const runtime = makeRuntime(deps)
+
+      await expect(
+        runtime.controller.enable({ stack: 'gvisor' }),
+      ).rejects.toThrow('kernel failed to start')
+      expect(deps.client.close).toHaveBeenCalledTimes(1)
+      expect(deps.supervisor.start).toHaveBeenCalledTimes(1)
+      expect(runtime.isTunMode()).toBe(false)
+    })
+  })
+
+  describe('helper readiness', () => {
+    it.each(['ENOENT', 'ECONNREFUSED'])(
+      'reconnects while a new helper is starting (%s)',
+      async (code) => {
+        vi.useFakeTimers()
+        try {
+          const deps = makeDeps()
+          vi.mocked(deps.client.getVersion)
+            .mockRejectedValueOnce(
+              Object.assign(new Error('not listening'), { code }),
+            )
+            .mockRejectedValueOnce(
+              Object.assign(new Error('not listening'), { code }),
+            )
+          const runtime = makeRuntime(deps)
+          const enable = runtime.controller.enable({ stack: 'gvisor' })
+          await vi.runAllTimersAsync()
+          await enable
+
+          expect(deps.connectClient).toHaveBeenCalledTimes(3)
+          expect(deps.client.close).toHaveBeenCalledTimes(2)
+          expect(deps.installer.install).toHaveBeenCalledTimes(1)
+          expect(deps.client.startKernel).toHaveBeenCalledTimes(1)
+          expect(runtime.isTunMode()).toBe(true)
+        } finally {
+          vi.useRealTimers()
+        }
+      },
+    )
+
+    it('repairs a registered helper that no longer opens its socket', async () => {
+      vi.useFakeTimers()
+      try {
+        const deps = makeDeps({ installed: true })
+        vi.mocked(deps.client.getVersion).mockRejectedValue(
+          Object.assign(new Error('connect ENOENT'), { code: 'ENOENT' }),
+        )
+        vi.mocked(deps.installer.install).mockImplementationOnce(async () => {
+          vi.mocked(deps.client.getVersion).mockResolvedValue({
+            type: 'getVersion',
+            ok: true,
+            version: '1',
+          })
+        })
+        const runtime = makeRuntime(deps)
+        const enable = runtime.controller.enable({ stack: 'gvisor' })
+        await vi.runAllTimersAsync()
+        await enable
+
+        expect(deps.installer.install).toHaveBeenCalledTimes(1)
+        expect(deps.installer.uninstall).not.toHaveBeenCalled()
+        expect(deps.client.close).toHaveBeenCalledTimes(21)
+        expect(deps.client.startKernel).toHaveBeenCalledTimes(1)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('bounds retries and restores the sidecar when a fresh install never starts', async () => {
+      vi.useFakeTimers()
+      try {
+        const deps = makeDeps()
+        const failure = Object.assign(new Error('connect ENOENT'), {
+          code: 'ENOENT',
+        })
+        vi.mocked(deps.client.getVersion).mockRejectedValue(failure)
+        const runtime = makeRuntime(deps)
+        const result = runtime.controller
+          .enable({ stack: 'gvisor' })
+          .catch((err: unknown) => err)
+        await vi.runAllTimersAsync()
+
+        expect(await result).toBe(failure)
+        expect(deps.connectClient).toHaveBeenCalledTimes(21)
+        expect(deps.client.close).toHaveBeenCalledTimes(21)
+        expect(deps.installer.install).toHaveBeenCalledTimes(1)
+        expect(deps.client.startKernel).not.toHaveBeenCalled()
+        expect(deps.supervisor.start).toHaveBeenCalledTimes(1)
+        expect(runtime.isTunMode()).toBe(false)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('does not retry or repair an authentication failure', async () => {
+      const deps = makeDeps({ installed: true })
+      vi.mocked(deps.client.getVersion).mockRejectedValue(
+        new Error('helper: shared secret mismatch'),
+      )
+      const runtime = makeRuntime(deps)
+
+      await expect(
+        runtime.controller.enable({ stack: 'gvisor' }),
+      ).rejects.toThrow('shared secret mismatch')
+      expect(deps.connectClient).toHaveBeenCalledTimes(1)
+      expect(deps.client.close).toHaveBeenCalledTimes(1)
+      expect(deps.installer.install).not.toHaveBeenCalled()
+      expect(deps.supervisor.start).toHaveBeenCalledTimes(1)
+    })
+
+    it('repairs the permissions of an old root-owned socket without readiness retries', async () => {
+      const deps = makeDeps({ installed: true })
+      vi.mocked(deps.client.getVersion).mockRejectedValueOnce(
+        Object.assign(new Error('connect EACCES'), { code: 'EACCES' }),
+      )
+      const runtime = makeRuntime(deps)
+
+      await runtime.controller.enable({ stack: 'gvisor' })
+
+      expect(deps.connectClient).toHaveBeenCalledTimes(2)
+      expect(deps.client.close).toHaveBeenCalledTimes(1)
+      expect(deps.installer.install).toHaveBeenCalledTimes(1)
+      expect(deps.client.startKernel).toHaveBeenCalledTimes(1)
     })
   })
 
@@ -218,13 +375,12 @@ describe('createTunRuntime', () => {
 
       await runtime.deps.startPrivileged()
 
-      // connect -> (mismatch) -> close stale -> uninstall -> install -> reconnect
+      // connect -> (mismatch) -> close stale -> repair -> reconnect
       // -> handshake ok -> startKernel. The rejected-once getVersion doesn't run
       // the default impl, so only the SECOND (matching) handshake records order.
       expect(deps.order).toEqual([
         'connectClient',
         'client.close',
-        'installer.uninstall',
         'installer.install',
         'connectClient',
         'client.getVersion',
@@ -250,7 +406,7 @@ describe('createTunRuntime', () => {
       )
       // Exactly one self-heal attempt, then it gives up rather than spawn against
       // an incompatible helper.
-      expect(deps.installer.uninstall).toHaveBeenCalledTimes(1)
+      expect(deps.installer.uninstall).not.toHaveBeenCalled()
       expect(deps.installer.install).toHaveBeenCalledTimes(1)
       expect(deps.client.startKernel).not.toHaveBeenCalled()
       // Both opened sockets (stale + post-reinstall) are closed — no leaked FD.
@@ -264,7 +420,7 @@ describe('createTunRuntime', () => {
       )
       const runtime = makeRuntime(deps)
 
-      await expect(runtime.deps.startPrivileged()).rejects.toThrow(/timed out/)
+      await expect(runtime.deps.startPrivileged()).rejects.toThrow('timed out')
       // A timeout / dropped socket is NOT a stale install — don't tear a healthy
       // service down on a transient blip.
       expect(deps.installer.uninstall).not.toHaveBeenCalled()
@@ -329,6 +485,7 @@ describe('createTunRuntime', () => {
         'setSection:tun',
         'installer.install',
         'connectClient',
+        'client.getVersion',
         'client.startKernel',
       ])
       expect(deps.setSection).toHaveBeenCalledWith(

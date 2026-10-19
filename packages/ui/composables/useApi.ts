@@ -235,10 +235,26 @@ export function useRequest() {
 }
 
 export function useGithubAPI() {
+  const runtimeConfig = useRuntimeConfig()
   const headers = new Headers()
+  headers.set('Accept', 'application/vnd.github+json')
 
-  if (import.meta.env.VITE_APP_GH_TOKEN) {
-    headers.set('Authorization', `Bearer ${import.meta.env.VITE_APP_GH_TOKEN}`)
+  const browserConfig =
+    typeof window !== 'undefined'
+      ? (window as unknown as {
+          __METACUBEXD_CONFIG__?: { githubToken?: string }
+          metacubexd?: { githubToken?: string }
+        })
+      : undefined
+  const injectedToken =
+    browserConfig?.metacubexd?.githubToken ||
+    browserConfig?.__METACUBEXD_CONFIG__?.githubToken
+  const token =
+    injectedToken ||
+    (runtimeConfig.public.githubToken as string | undefined) ||
+    import.meta.env.VITE_APP_GH_TOKEN
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`)
   }
 
   return ky.create({
@@ -248,7 +264,8 @@ export function useGithubAPI() {
 }
 
 // API Functions
-export type EndpointCheckError = 'mixed_content' | 'network_error' | null
+export type EndpointCheckError =
+  'mixed_content' | 'auth_error' | 'network_error' | null
 
 export function checkEndpointAPI(
   url: string,
@@ -262,6 +279,14 @@ export function checkEndpointAPI(
     .then(() => null)
     .catch((err) => {
       console.error(err)
+
+      // A rejected secret (Mihomo answers /version with 401) is an auth
+      // problem, not a reachability one — surface it distinctly so the fix
+      // is "check the secret", not "check the URL / is the kernel running".
+      const status = err?.response?.status
+      if (status === 401 || status === 403) {
+        return 'auth_error'
+      }
 
       if (
         typeof window !== 'undefined' &&
@@ -589,7 +614,91 @@ export function useConfigActions() {
 }
 
 // Release API
-const BACKEND_VERSION_RE = /(alpha|beta|meta)-?(\w+)/
+const METACUBEX_MIHOMO_REPOSITORY_URL = 'repos/MetaCubeX/mihomo'
+const VERNESONG_MIHOMO_REPOSITORY_URL = 'repos/vernesong/mihomo'
+
+type BackendReleaseChannel = 'alpha' | 'beta' | 'meta' | 'stable'
+
+function isAsciiWord(char: string | undefined): boolean {
+  if (!char) return false
+  const lower = char.toLowerCase()
+  return (
+    (lower >= 'a' && lower <= 'z') ||
+    (char >= '0' && char <= '9') ||
+    char === '_'
+  )
+}
+
+function backendVersionParts(currentVersion: string): {
+  channel: Exclude<BackendReleaseChannel, 'stable'> | undefined
+  suffix: string
+} {
+  const value = currentVersion.toLowerCase()
+  let best:
+    | {
+        index: number
+        channel: Exclude<BackendReleaseChannel, 'stable'>
+        suffix: string
+      }
+    | undefined
+
+  for (const channel of ['alpha', 'beta', 'meta'] as const) {
+    let index = value.indexOf(channel)
+    while (index !== -1) {
+      const hasBoundary = index === 0 || !isAsciiWord(value[index - 1])
+      let suffixStart = index + channel.length
+      if (value[suffixStart] === '-') suffixStart++
+      const hasSuffix =
+        suffixStart < value.length && value[suffixStart]!.trim() !== ''
+      if (hasBoundary && hasSuffix) {
+        let suffixEnd = suffixStart
+        while (suffixEnd < value.length && value[suffixEnd]!.trim() !== '') {
+          suffixEnd++
+        }
+        const candidate = {
+          index,
+          channel,
+          suffix: currentVersion.slice(suffixStart, suffixEnd),
+        }
+        if (!best || candidate.index < best.index) best = candidate
+        break
+      }
+      index = value.indexOf(channel, index + channel.length)
+    }
+  }
+
+  return best
+    ? { channel: best.channel, suffix: best.suffix }
+    : { channel: undefined, suffix: '' }
+}
+
+function resolveBackendReleaseTarget(currentVersion: string): {
+  channel: BackendReleaseChannel
+  repositoryURL: string
+  versionSuffix: string
+} {
+  const { channel, suffix } = backendVersionParts(currentVersion)
+
+  return {
+    channel: channel ?? 'stable',
+    repositoryURL: currentVersion.toLowerCase().includes('-smart-')
+      ? VERNESONG_MIHOMO_REPOSITORY_URL
+      : METACUBEX_MIHOMO_REPOSITORY_URL,
+    versionSuffix: suffix,
+  }
+}
+
+function isStableRelease(release: ReleaseAPIResponse) {
+  const tagName = release.tag_name.toLowerCase()
+
+  return !tagName.includes('alpha') && !tagName.includes('prerelease')
+}
+
+function isAlphaRelease(release: ReleaseAPIResponse) {
+  const tagName = release.tag_name.toLowerCase()
+
+  return tagName.includes('alpha') || tagName.includes('prerelease')
+}
 
 interface ReleaseAPIResponse {
   tag_name: string
@@ -617,8 +726,8 @@ export async function backendReleaseAPI(currentVersion: string) {
   if (isSingBoxVersion(currentVersion)) return { isUpdateAvailable: false }
 
   const githubAPI = useGithubAPI()
-  const repositoryURL = 'repos/MetaCubeX/mihomo'
-  const match = BACKEND_VERSION_RE.exec(currentVersion)
+  const { channel, repositoryURL, versionSuffix } =
+    resolveBackendReleaseTarget(currentVersion)
 
   const releaseByAssets = async (url: string, versionSuffix: string) => {
     const { assets, body } = await githubAPI
@@ -635,10 +744,7 @@ export async function backendReleaseAPI(currentVersion: string) {
     }
   }
 
-  if (match) {
-    const versionSuffix = match[2] || ''
-    const channel = match[1] || ''
-
+  if (channel !== 'stable') {
     if (channel === 'meta')
       return await releaseByAssets('releases/latest', versionSuffix)
 
@@ -686,20 +792,17 @@ export async function fetchBackendReleasesAPI(
   count: number = 10,
 ): Promise<ReleaseInfo[]> {
   const githubAPI = useGithubAPI()
-  const repositoryURL = 'repos/MetaCubeX/mihomo'
-  const match = BACKEND_VERSION_RE.exec(currentVersion)
+  const { channel, repositoryURL, versionSuffix } =
+    resolveBackendReleaseTarget(currentVersion)
 
-  if (!match) {
+  if (channel === 'stable') {
     // Stable version (e.g. "v1.19.9") - fetch stable releases
     let releases = await githubAPI
       .get(`${repositoryURL}/releases`, {
         searchParams: { per_page: count },
       })
       .json<ReleaseAPIResponse[]>()
-    releases = releases.filter(
-      (r) =>
-        !r.tag_name.includes('Alpha') && !r.tag_name.includes('Prerelease'),
-    )
+    releases = releases.filter(isStableRelease)
 
     return releases.map((release) => ({
       version: release.tag_name,
@@ -709,30 +812,20 @@ export async function fetchBackendReleasesAPI(
     }))
   }
 
-  const channel = match[1] || ''
-  const versionSuffix = match[2] || ''
   let releases: ReleaseAPIResponse[] = []
 
   if (channel === 'meta') {
     releases = await githubAPI
       .get(`${repositoryURL}/releases`, { searchParams: { per_page: count } })
       .json<ReleaseAPIResponse[]>()
-    releases = releases.filter(
-      (r) =>
-        !r.tag_name.includes('Alpha') && !r.tag_name.includes('Prerelease'),
-    )
+    releases = releases.filter(isStableRelease)
   } else if (channel === 'alpha') {
     releases = await githubAPI
       .get(`${repositoryURL}/releases`, {
         searchParams: { per_page: count * 2 },
       })
       .json<ReleaseAPIResponse[]>()
-    releases = releases
-      .filter(
-        (r) =>
-          r.tag_name.includes('Alpha') || r.tag_name.includes('Prerelease'),
-      )
-      .slice(0, count)
+    releases = releases.filter(isAlphaRelease).slice(0, count)
   }
 
   return releases.map((release) => ({

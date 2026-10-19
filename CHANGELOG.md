@@ -1,5 +1,283 @@
 # Changelog
 
+## [1.273.1](https://github.com/MetaCubeX/metacubexd/compare/v1.273.0...v1.273.1) (2026-09-10)
+
+
+### Bug Fixes
+
+* **desktop:** repair native TUN helper startup and recovery ([81b9f81](https://github.com/MetaCubeX/metacubexd/commit/81b9f81d2664a03cb74fb92f33a5f5cdb3dc2255)), closes [#2149](https://github.com/MetaCubeX/metacubexd/issues/2149)
+
+## [1.273.0](https://github.com/MetaCubeX/metacubexd/compare/v1.272.0...v1.273.0) (2026-08-16)
+
+
+### Features
+
+* **ui:** add last-week traffic range ([#2177](https://github.com/MetaCubeX/metacubexd/issues/2177)) ([32a75fb](https://github.com/MetaCubeX/metacubexd/commit/32a75fb8eaa7bb99f596f5f71b25c3007d27690f))
+
+## [1.272.0](https://github.com/MetaCubeX/metacubexd/compare/v1.271.0...v1.272.0) (2026-08-15)
+
+
+### Features
+
+* **proxies:** refine desktop proxy navigation ([35a46a5](https://github.com/MetaCubeX/metacubexd/commit/35a46a5bd305c8533bf0f8f003362f03a0568adf))
+
+## [1.271.0](https://github.com/MetaCubeX/metacubexd/compare/v1.270.6...v1.271.0) (2026-08-01)
+
+
+### Features
+
+* **proxies:** add mobile scroll-to-top ([9ca5eb0](https://github.com/MetaCubeX/metacubexd/commit/9ca5eb065bfd49d8248d55754d6b7ed7deb54581))
+
+
+### Bug Fixes
+
+* **ui:** add managed rules and proxies CRUD ([#2161](https://github.com/MetaCubeX/metacubexd/issues/2161)) ([fd6fc0a](https://github.com/MetaCubeX/metacubexd/commit/fd6fc0a9ffa0413abc8f3f30e00c3975f95ae510))
+* **ui:** prevent mobile document overscroll ([a7c0497](https://github.com/MetaCubeX/metacubexd/commit/a7c049765970b91bcb17f7b46d5a38aec6805aa5))
+
+## [1.270.6](https://github.com/MetaCubeX/metacubexd/compare/v1.270.5...v1.270.6) (2026-07-27)
+
+
+### Bug Fixes
+
+* **ui:** restore mobile config access and stop proxy popover from following scroll ([ebc664f](https://github.com/MetaCubeX/metacubexd/commit/ebc664ffd93d33ebd7c0b7586f2225ddc5909623))
+
+## [1.270.5](https://github.com/MetaCubeX/metacubexd/compare/v1.270.4...v1.270.5) (2026-07-25)
+
+
+### Bug Fixes
+
+* **server:** honor DEFAULT_BACKEND_URL in the all-in-one image ([#2155](https://github.com/MetaCubeX/metacubexd/issues/2155)) ([08947ed](https://github.com/MetaCubeX/metacubexd/commit/08947ed9c1c4448d223b5cf1baa576138ec8b0f8))
+
+## [1.270.4](https://github.com/MetaCubeX/metacubexd/compare/v1.270.3...v1.270.4) (2026-07-25)
+
+
+### Bug Fixes
+
+* document DEFAULT_BACKEND_URL and seed script profile template ([#2155](https://github.com/MetaCubeX/metacubexd/issues/2155)) ([d552032](https://github.com/MetaCubeX/metacubexd/commit/d552032d7cf13c5e2352c27a7f0a5dd61a0c82a0))
+
+## [1.270.3](https://github.com/MetaCubeX/metacubexd/compare/v1.270.2...v1.270.3) (2026-07-25)
+
+
+### Bug Fixes
+
+* **agent:** wire script runner into profile store so script profiles apply ([7dc525f](https://github.com/MetaCubeX/metacubexd/commit/7dc525f149f5478ef9ac38f24f377a938edadfbd)), closes [#2153](https://github.com/MetaCubeX/metacubexd/issues/2153)
+* **deps:** revert typescript to ^6.0.3 to restore eslint/vue-tsc toolchain ([6c4a756](https://github.com/MetaCubeX/metacubexd/commit/6c4a756435ced256db4dcb06d1b1d333d1e27676))
+
+## [1.270.2](https://github.com/MetaCubeX/metacubexd/compare/v1.270.1...v1.270.2) (2026-07-24)
+
+
+### Bug Fixes
+
+* **ui:** drop obsolete @unhead/vue override that broke nuxt 4.5.0 build ([4b9f798](https://github.com/MetaCubeX/metacubexd/commit/4b9f7983a29ba798a5a3943baa5e8fff0594cb59))
+
+## [1.270.1](https://github.com/MetaCubeX/metacubexd/compare/v1.270.0...v1.270.1) (2026-07-24)
+
+
+### Bug Fixes
+
+* tray/UI sync, TUN enable reliability, latency bar alignment ([#2148](https://github.com/MetaCubeX/metacubexd/issues/2148) [#2149](https://github.com/MetaCubeX/metacubexd/issues/2149) [#2150](https://github.com/MetaCubeX/metacubexd/issues/2150)) ([173a565](https://github.com/MetaCubeX/metacubexd/commit/173a56536b5a5f15a9fa3758f0a56ea2577464d3))
+
+## [1.270.0](https://github.com/MetaCubeX/metacubexd/compare/v1.269.1...v1.270.0) (2026-07-20)
+
+
+### Features
+
+* **desktop:** tray speed & node switch, silent update, hotkey settings, TUN auto-restore ([2f303bb](https://github.com/MetaCubeX/metacubexd/commit/2f303bbf98ebc71ddc4d75ee056ffba40b4fa565))
+
+## [1.269.1](https://github.com/MetaCubeX/metacubexd/compare/v1.269.0...v1.269.1) (2026-07-20)
+
+
+### Bug Fixes
+
+* **deps:** restore toolchain compatibility by reverting typescript to ^6.0.3 ([bc8c374](https://github.com/MetaCubeX/metacubexd/commit/bc8c374d6810b1436eaed5f5283c16e5c20f888b))
+* memory chart unit should be MB instead of MB/s ([bc76c56](https://github.com/MetaCubeX/metacubexd/commit/bc76c56623d7edf31274394c4ccf052b4f9c18b3)), closes [#2143](https://github.com/MetaCubeX/metacubexd/issues/2143)
+
+## [1.269.0](https://github.com/MetaCubeX/metacubexd/compare/v1.268.5...v1.269.0) (2026-07-16)
+
+
+### Features
+
+* add visual profile configuration editor ([fddcf21](https://github.com/MetaCubeX/metacubexd/commit/fddcf21fd38e0ff0855cca1dde08eded8243d25e))
+
+## [1.268.5](https://github.com/MetaCubeX/metacubexd/compare/v1.268.4...v1.268.5) (2026-07-16)
+
+
+### Bug Fixes
+
+* address release and profile reliability issues ([2dc9212](https://github.com/MetaCubeX/metacubexd/commit/2dc9212715ec66385e168fa090dc93d5db8f4c00))
+
+## [1.268.4](https://github.com/MetaCubeX/metacubexd/compare/v1.268.3...v1.268.4) (2026-07-14)
+
+
+### Bug Fixes
+
+* **desktop:** ship Linux icon sizes ([d61af62](https://github.com/MetaCubeX/metacubexd/commit/d61af626eb071bb849948b4471666cae071ea362)), closes [#2131](https://github.com/MetaCubeX/metacubexd/issues/2131)
+
+## [1.268.3](https://github.com/MetaCubeX/metacubexd/compare/v1.268.2...v1.268.3) (2026-07-13)
+
+
+### Bug Fixes
+
+* **connections:** align mobile connection details ([9bbab26](https://github.com/MetaCubeX/metacubexd/commit/9bbab261589a5c720f0007f12022c721eee44328))
+
+## [1.268.2](https://github.com/MetaCubeX/metacubexd/compare/v1.268.1...v1.268.2) (2026-07-13)
+
+
+### Bug Fixes
+
+* **desktop:** handle linux helper not found ([#2126](https://github.com/MetaCubeX/metacubexd/issues/2126)) ([cad64d7](https://github.com/MetaCubeX/metacubexd/commit/cad64d7e6d8c9ccfd282fa90fead37664097368c))
+* **desktop:** handle missing helper service probes ([ba77600](https://github.com/MetaCubeX/metacubexd/commit/ba77600d041a789ffee9fad7caa8cf2b4f28ee48)), closes [#2127](https://github.com/MetaCubeX/metacubexd/issues/2127) [#2128](https://github.com/MetaCubeX/metacubexd/issues/2128)
+* **proxies:** reuse successful provider latency history ([4f2ddc6](https://github.com/MetaCubeX/metacubexd/commit/4f2ddc6c648060605768cea937e85e8db9b86495))
+
+## [1.268.1](https://github.com/MetaCubeX/metacubexd/compare/v1.268.0...v1.268.1) (2026-07-13)
+
+
+### Bug Fixes
+
+* **desktop:** repair Linux package release ([3ded5cf](https://github.com/MetaCubeX/metacubexd/commit/3ded5cf92c9ff06fd1f05a8247748702c2deadea))
+
+## [1.268.0](https://github.com/MetaCubeX/metacubexd/compare/v1.267.3...v1.268.0) (2026-07-13)
+
+
+### Features
+
+* **desktop:** add native Linux and Homebrew packages ([8d1e98f](https://github.com/MetaCubeX/metacubexd/commit/8d1e98ffae128f5ee41a8fa4754004cdd023c89c)), closes [#2123](https://github.com/MetaCubeX/metacubexd/issues/2123)
+
+## [1.267.3](https://github.com/MetaCubeX/metacubexd/compare/v1.267.2...v1.267.3) (2026-07-13)
+
+
+### Bug Fixes
+
+* **agent:** allow geo-backed profile validation ([c726025](https://github.com/MetaCubeX/metacubexd/commit/c726025b3bd258f5b132e614de6a6a0b29f09264))
+* **agent:** bound subscription profile fetches ([7d01428](https://github.com/MetaCubeX/metacubexd/commit/7d0142826b9603e010c8f1561aec54f3446a9680))
+* **ui:** align profile operation timeouts ([3fe4784](https://github.com/MetaCubeX/metacubexd/commit/3fe47845ac7ff7f78439c4edc2f713865ce3f3cb))
+* **ui:** surface profile validation details ([500bcb1](https://github.com/MetaCubeX/metacubexd/commit/500bcb1ef9a3cf52558a765d02d8a535dac9b787))
+
+## [1.267.2](https://github.com/MetaCubeX/metacubexd/compare/v1.267.1...v1.267.2) (2026-07-11)
+
+
+### Bug Fixes
+
+* **ui:** stop proxies page horizontal overflow in two-column layout ([046658c](https://github.com/MetaCubeX/metacubexd/commit/046658cf0f562487a358448088efa473de2af0c0))
+
+## [1.267.1](https://github.com/MetaCubeX/metacubexd/compare/v1.267.0...v1.267.1) (2026-07-11)
+
+
+### Bug Fixes
+
+* **desktop:** make Windows sysproxy and TUN elevation actually work ([d9558ac](https://github.com/MetaCubeX/metacubexd/commit/d9558ac63649d018811c478c0651e82ff3798b75))
+* **desktop:** sync panel after tray edits and free renderer on close ([726f4a7](https://github.com/MetaCubeX/metacubexd/commit/726f4a731b5b7d331ff6746719ff5c47a7e767af))
+* **ui:** keep proxy node latency tooltip inside the viewport ([1eee578](https://github.com/MetaCubeX/metacubexd/commit/1eee5782227d330ce1706e67e89ee9b8b47a14b6))
+
+## [1.267.0](https://github.com/MetaCubeX/metacubexd/compare/v1.266.1...v1.267.0) (2026-07-08)
+
+
+### Features
+
+* **agent:** persist an explicitly applied system-proxy bypass list ([dcd1f33](https://github.com/MetaCubeX/metacubexd/commit/dcd1f33366563f797e790a96cf02f4cb2324813c))
+* **desktop:** tray/menu overhaul, close-to-tray, on-disk logs, login item, update check ([68f9d31](https://github.com/MetaCubeX/metacubexd/commit/68f9d31246c729b7244476fad4dbc293d7918773))
+
+## [1.266.1](https://github.com/MetaCubeX/metacubexd/compare/v1.266.0...v1.266.1) (2026-07-07)
+
+
+### Bug Fixes
+
+* **server:** separate refresh/apply endpoints and validate before activate ([c3f56c1](https://github.com/MetaCubeX/metacubexd/commit/c3f56c16e23fc9fbbe4a584bcd6c904e8fe30079))
+
+## [1.266.0](https://github.com/MetaCubeX/metacubexd/compare/v1.265.2...v1.266.0) (2026-07-07)
+
+
+### Features
+
+* **server:** wire profile auto-update, refresh-apply, and kernel rollback/recover ([62d3855](https://github.com/MetaCubeX/metacubexd/commit/62d3855d7d5be6b645504b1a9e11dbd63afe20c4))
+
+## [1.265.2](https://github.com/MetaCubeX/metacubexd/compare/v1.265.1...v1.265.2) (2026-07-05)
+
+
+### Bug Fixes
+
+* let proxy group headers scroll with nodes ([f5bce19](https://github.com/MetaCubeX/metacubexd/commit/f5bce197c32fec163e1dfb5e5c28f25b11bcc1f0)), closes [#2095](https://github.com/MetaCubeX/metacubexd/issues/2095)
+
+## [1.265.1](https://github.com/MetaCubeX/metacubexd/compare/v1.265.0...v1.265.1) (2026-07-04)
+
+
+### Bug Fixes
+
+* **ui:** restore the monaco-editor 0.52.2 pin and slim monaco imports ([1373d25](https://github.com/MetaCubeX/metacubexd/commit/1373d25d9bd2ad88b3b2205de868d63ce9010752)), closes [#2101](https://github.com/MetaCubeX/metacubexd/issues/2101)
+
+## [1.265.0](https://github.com/MetaCubeX/metacubexd/compare/v1.264.3...v1.265.0) (2026-07-01)
+
+
+### Features
+
+* **setup:** instrument-console connect readout, auth-error diagnosis, a11y ([a4f630d](https://github.com/MetaCubeX/metacubexd/commit/a4f630d3cb8317037f5cc0bbbe8d60092f1b2eb6))
+
+## [1.264.3](https://github.com/MetaCubeX/metacubexd/compare/v1.264.2...v1.264.3) (2026-07-01)
+
+
+### Bug Fixes
+
+* **agent:** poll loopback, not the 0.0.0.0 bind host, for kernel readiness ([9153075](https://github.com/MetaCubeX/metacubexd/commit/9153075389bbcd9abfb02cdd9f630cf81bb336d8)), closes [#2098](https://github.com/MetaCubeX/metacubexd/issues/2098)
+
+## [1.264.2](https://github.com/MetaCubeX/metacubexd/compare/v1.264.1...v1.264.2) (2026-07-01)
+
+
+### Bug Fixes
+
+* **proxies:** default the sticky group header off ([#2095](https://github.com/MetaCubeX/metacubexd/issues/2095)) ([acb779a](https://github.com/MetaCubeX/metacubexd/commit/acb779a984bf6e3b37b8ce024840acd83bed1a21))
+
+## [1.264.1](https://github.com/MetaCubeX/metacubexd/compare/v1.264.0...v1.264.1) (2026-06-30)
+
+
+### Bug Fixes
+
+* **i18n:** unify latency terminology in Russian locale ([#2093](https://github.com/MetaCubeX/metacubexd/issues/2093)) ([96d34d5](https://github.com/MetaCubeX/metacubexd/commit/96d34d501859576f8126f7cbad88cd946ac291c1))
+
+## [1.264.0](https://github.com/MetaCubeX/metacubexd/compare/v1.263.0...v1.264.0) (2026-06-29)
+
+
+### Features
+
+* **docker:** publish the standalone metacubexd panel image again ([#2091](https://github.com/MetaCubeX/metacubexd/issues/2091)) ([9164c8b](https://github.com/MetaCubeX/metacubexd/commit/9164c8b7cb5d03a58c4e7a36990fd94cbdd89f70)), closes [#2088](https://github.com/MetaCubeX/metacubexd/issues/2088)
+
+
+### Bug Fixes
+
+* **ui:** spin only the refresh icon and unify the two overview refresh buttons ([#2090](https://github.com/MetaCubeX/metacubexd/issues/2090)) ([b21e5a1](https://github.com/MetaCubeX/metacubexd/commit/b21e5a1abb575223640a7c27e34782cb94debab0)), closes [#2089](https://github.com/MetaCubeX/metacubexd/issues/2089)
+
+## [1.263.0](https://github.com/MetaCubeX/metacubexd/compare/v1.262.0...v1.263.0) (2026-06-27)
+
+
+### Features
+
+* **proxies:** add core-controlled latency test url source ([#2082](https://github.com/MetaCubeX/metacubexd/issues/2082)) ([3287f6a](https://github.com/MetaCubeX/metacubexd/commit/3287f6a9d820852fb4cc06aec864bfb08180a59d))
+
+
+### Bug Fixes
+
+* **ui:** fetch frontend release list from upstream repo, not a fork ([fa7b15b](https://github.com/MetaCubeX/metacubexd/commit/fa7b15b0eeb29ff2b1ff4c073064813c1b29b384))
+
+## [1.262.0](https://github.com/MetaCubeX/metacubexd/compare/v1.261.10...v1.262.0) (2026-06-27)
+
+
+### Features
+
+* adapt vernesong/mihomo ([#2085](https://github.com/MetaCubeX/metacubexd/issues/2085)) ([73ee2dd](https://github.com/MetaCubeX/metacubexd/commit/73ee2ddd14bee117d063967ac7418e77841a5d7b))
+
+## [1.261.10](https://github.com/MetaCubeX/metacubexd/compare/v1.261.9...v1.261.10) (2026-06-26)
+
+
+### Bug Fixes
+
+* **ui:** use oklab for color-mix to stop hue degradation in packaged builds ([1ff63a2](https://github.com/MetaCubeX/metacubexd/commit/1ff63a2bb2e8481523d1483075f8cea5c7224fe4)), closes [#2078](https://github.com/MetaCubeX/metacubexd/issues/2078)
+
+## [1.261.9](https://github.com/MetaCubeX/metacubexd/compare/v1.261.8...v1.261.9) (2026-06-26)
+
+
+### Bug Fixes
+
+* **ui:** soften selected proxy-node card on sunset theme ([#2078](https://github.com/MetaCubeX/metacubexd/issues/2078)) ([274be20](https://github.com/MetaCubeX/metacubexd/commit/274be20156494bf1e0283a90cc68aefa6134da20))
+
 ## [1.261.8](https://github.com/MetaCubeX/metacubexd/compare/v1.261.7...v1.261.8) (2026-06-25)
 
 

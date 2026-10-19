@@ -49,7 +49,9 @@ describe('buildMetacubexdBridge', () => {
       MCXD_CONTROL_TOKEN: 'tok',
       MCXD_CLASH_URL: 'http://127.0.0.1:2',
       MCXD_CLASH_SECRET: 'sec',
+      GITHUB_TOKEN: 'github-token',
     })
+    expect(bridge.githubToken).toBe('github-token')
     expect(bridge.control).toEqual({
       base: 'http://127.0.0.1:1/api/control',
       token: 'tok',
@@ -62,6 +64,7 @@ describe('buildMetacubexdBridge', () => {
 
   it('leaves control/endpoint fields undefined when the env is unset', () => {
     const { bridge } = makeBridge({})
+    expect(bridge.githubToken).toBeUndefined()
     expect(bridge.control).toEqual({ base: undefined, token: undefined })
     expect(bridge.endpoint).toEqual({ url: undefined, secret: undefined })
   })
@@ -105,5 +108,51 @@ describe('buildMetacubexdBridge', () => {
       expect.any(Function),
     )
     expect(listeners).toHaveLength(0)
+  })
+
+  it('onBackendInvalidate forwards main-process events to the callback', () => {
+    const { bridge, listeners } = makeBridge()
+    const cb = vi.fn()
+    bridge.onBackendInvalidate(cb)
+
+    expect(listeners).toHaveLength(1)
+    const [channel, listener] = listeners[0]!
+    expect(channel).toBe('backend:invalidate')
+    listener({}, { reason: 'mode' })
+    expect(cb).toHaveBeenCalledWith({ reason: 'mode' })
+  })
+
+  it('onBackendInvalidate returns an unsubscribe that removes the listener', () => {
+    const { bridge, ipc, listeners } = makeBridge()
+    const unsub = bridge.onBackendInvalidate(vi.fn())
+    expect(listeners).toHaveLength(1)
+
+    unsub()
+
+    expect(ipc.removeListener).toHaveBeenCalledWith(
+      'backend:invalidate',
+      expect.any(Function),
+    )
+    expect(listeners).toHaveLength(0)
+  })
+
+  it('proxies the settings surface to its ipc channels', async () => {
+    const { bridge, ipc } = makeBridge()
+    await bridge.settings.get()
+    await bridge.settings.set({ showTraySpeed: false })
+    expect(ipc.invoke).toHaveBeenCalledWith('desktop:get-settings')
+    expect(ipc.invoke).toHaveBeenCalledWith('desktop:set-settings', {
+      showTraySpeed: false,
+    })
+  })
+
+  it('proxies the hotkeys surface to its ipc channels', async () => {
+    const { bridge, ipc } = makeBridge()
+    await bridge.hotkeys.get()
+    await bridge.hotkeys.set({ toggleWindow: 'Ctrl+X' })
+    expect(ipc.invoke).toHaveBeenCalledWith('desktop:get-hotkeys')
+    expect(ipc.invoke).toHaveBeenCalledWith('desktop:set-hotkeys', {
+      toggleWindow: 'Ctrl+X',
+    })
   })
 })

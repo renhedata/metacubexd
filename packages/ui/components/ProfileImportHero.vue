@@ -3,6 +3,7 @@
 import type { ProfileMeta } from '~/types/control'
 import { IconClipboard, IconDownload, IconFileUpload } from '@tabler/icons-vue'
 import { toast } from 'vue-sonner'
+import { controlErrorMessage } from '~/utils/controlError'
 
 // Shared subscription-import experience used by BOTH the first-run wizard
 // (variant="wizard", chrome-less inside the overlay) and the /profiles page
@@ -30,6 +31,20 @@ const fileInput = ref<HTMLInputElement | null>(null)
 // kilobytes, not megabytes.
 const MAX_FILE_BYTES = 1024 * 1024
 
+function nameWithoutExtension(fileName: string): string {
+  const dot = fileName.lastIndexOf('.')
+  return dot > 0 ? fileName.slice(0, dot) : fileName
+}
+
+function isHttpUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value)
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
 // Clipboard import is only offered where navigator.clipboard.readText exists
 // (secure contexts). Hide the control entirely rather than show a dead button.
 const clipboardSupported = ref(false)
@@ -48,7 +63,7 @@ const afterImport = async (meta: ProfileMeta) => {
 }
 
 const reportError = (e: unknown) => {
-  errorMessage.value = e instanceof Error ? e.message : String(e)
+  errorMessage.value = controlErrorMessage(e)
   toast.error(t('profilesImportFailed'), { description: errorMessage.value })
 }
 
@@ -83,7 +98,7 @@ const onFileChange = async (event: Event) => {
   try {
     const content = await file.text()
     const profileName =
-      name.value.trim() || file.name.replace(/\.[^.]+$/, '') || 'Imported'
+      name.value.trim() || nameWithoutExtension(file.name) || 'Imported'
     const meta = await api.createProfile({ name: profileName, content })
     await afterImport(meta)
   } catch (e) {
@@ -109,7 +124,7 @@ const onClipboard = async () => {
   }
   // A URL prefills the field for an explicit confirm (reuses the validated URL
   // path); anything else is imported as inline profile content.
-  if (/^https?:\/\//i.test(text)) {
+  if (isHttpUrl(text)) {
     url.value = text
     return
   }
@@ -155,18 +170,18 @@ const onClipboard = async () => {
           <input
             v-model="url"
             type="url"
-            class="input-bordered input input-sm w-full"
+            class="input-bordered input w-full input-sm"
             placeholder="https://..."
             autocomplete="off"
           />
         </label>
         <label class="flex flex-col gap-1 text-sm sm:w-40">
           <span class="text-base-content/60">{{ t('profilesName') }}</span>
-          <input v-model="name" class="input-bordered input input-sm w-full" />
+          <input v-model="name" class="input-bordered input w-full input-sm" />
         </label>
         <Button
           type="submit"
-          class="btn-sm btn-primary"
+          class="btn-primary btn-sm"
           :icon="IconDownload"
           :loading="busy"
           :disabled="!url.trim()"

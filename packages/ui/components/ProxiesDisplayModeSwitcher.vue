@@ -5,7 +5,6 @@ import {
   IconLayoutSidebar,
   IconList,
   IconTable,
-  IconTags,
 } from '@tabler/icons-vue'
 import { PROXIES_DISPLAY_MODE, PROXIES_DISPLAY_MODE_ORDER } from '~/constants'
 
@@ -20,7 +19,6 @@ const META: Record<
   [PROXIES_DISPLAY_MODE.CARD]: { icon: IconLayoutGrid, labelKey: 'cardMode' },
   [PROXIES_DISPLAY_MODE.LIST]: { icon: IconList, labelKey: 'listMode' },
   [PROXIES_DISPLAY_MODE.TABLE]: { icon: IconTable, labelKey: 'tableMode' },
-  [PROXIES_DISPLAY_MODE.CHIPS]: { icon: IconTags, labelKey: 'chipsMode' },
   [PROXIES_DISPLAY_MODE.MASTER]: {
     icon: IconLayoutSidebar,
     labelKey: 'masterDetailMode',

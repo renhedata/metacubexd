@@ -35,8 +35,6 @@ const bodyLayoutClass = computed(() => {
   switch (displayMode.value) {
     case PROXIES_DISPLAY_MODE.CARD:
       return 'grid'
-    case PROXIES_DISPLAY_MODE.CHIPS:
-      return 'flex flex-wrap gap-2'
     case PROXIES_DISPLAY_MODE.TABLE:
       return 'flex flex-col gap-1'
     default:
@@ -46,41 +44,29 @@ const bodyLayoutClass = computed(() => {
 })
 
 const cardGridStyle = computed(() => ({
-  gridTemplateColumns: `repeat(auto-fill, minmax(${PROXIES_CARD_SIZE_MIN_WIDTH[configStore.proxiesCardSize]}px, 1fr))`,
+  // min(100%, Npx) keeps auto-fill from overflowing narrow two-column panels
+  gridTemplateColumns: `repeat(auto-fill, minmax(min(100%, ${PROXIES_CARD_SIZE_MIN_WIDTH[configStore.proxiesCardSize]}px), 1fr))`,
   gap: `${PROXIES_CARD_SIZE_GAP[configStore.proxiesCardSize]}px`,
 }))
 </script>
 
 <template>
   <div
-    class="rounded-xl transition-[background,border-color] duration-200 ease-out select-none hover:border-[color-mix(in_oklch,var(--color-primary)_40%,transparent)] hover:bg-[color-mix(in_oklch,var(--color-base-200)_95%,transparent)]"
+    class="min-w-0 overflow-x-clip rounded-xl transition-[background,border-color] duration-200 ease-out select-none hover:border-[color-mix(in_oklab,var(--color-primary)_40%,transparent)] hover:bg-[color-mix(in_oklab,var(--color-base-200)_95%,transparent)]"
     style="
-      background: color-mix(in oklch, var(--color-base-200) 80%, transparent);
+      background: color-mix(in oklab, var(--color-base-200) 80%, transparent);
       border: 1px solid
-        color-mix(in oklch, var(--color-base-content) 10%, transparent);
+        color-mix(in oklab, var(--color-base-content) 10%, transparent);
       box-shadow: var(--lift-1);
     "
   >
     <div
-      class="flex cursor-pointer items-center justify-between p-4 pr-3 text-xl font-medium text-[var(--color-base-content)]"
-      :class="
-        configStore.stickyGroupHeader && isOpen
-          ? 'sticky top-0 z-20 rounded-t-xl backdrop-blur-sm'
-          : ''
-      "
-      :style="
-        configStore.stickyGroupHeader && isOpen
-          ? {
-              background:
-                'color-mix(in oklch, var(--color-base-200) 80%, transparent)',
-            }
-          : undefined
-      "
+      class="flex min-w-0 cursor-pointer items-center justify-between p-4 pr-3 text-xl font-medium text-[var(--color-base-content)]"
       @click="emit('collapse', !isOpen)"
     >
       <slot name="title" />
       <div
-        class="flex h-6 w-6 items-center justify-center text-[color-mix(in_oklch,var(--color-base-content)_50%,transparent)] transition-transform duration-[var(--dur-slow)] ease-[var(--ease-soft)]"
+        class="flex h-6 w-6 shrink-0 items-center justify-center text-[color-mix(in_oklab,var(--color-base-content)_50%,transparent)] transition-transform duration-[var(--dur-slow)] ease-[var(--ease-soft)]"
         :class="isOpen ? 'rotate-180' : ''"
       >
         <svg
@@ -106,7 +92,7 @@ const cardGridStyle = computed(() => ({
       <template v-if="isOpen">
         <div
           v-if="isTableMode"
-          class="flex items-center gap-2 px-3 pb-1 text-[0.7rem] font-semibold tracking-wide text-base-content/40 uppercase"
+          class="flex min-w-0 items-center gap-2 px-3 pb-1 text-[0.7rem] font-semibold tracking-wide text-base-content/40 uppercase"
         >
           <span class="w-4 shrink-0" />
           <span class="min-w-0 flex-1">{{ t('name', 'Name') }}</span>

@@ -11,6 +11,7 @@ import { randomBytes } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { readFile, writeFile } from 'node:fs/promises'
 import treeKillDefault from 'tree-kill'
+import { parse } from 'yaml'
 
 export interface SupervisorDeps {
   spawn?: (cmd: string, args: string[], opts?: object) => ChildProcess
@@ -45,6 +46,11 @@ function sleep(ms: number, now: () => number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms))
 }
 
+// Once validation times out, give the killed child a short bounded window to
+// emit exit before returning to callers that may delete its config file or
+// start another validator against the same homeDir.
+const VALIDATE_KILL_GRACE_MS = 5_000
+
 export function createSupervisor(
   opts: CreateSupervisorOptions,
   deps: SupervisorDeps = {},
@@ -62,6 +68,12 @@ export function createSupervisor(
 
   const startTimeoutMs = opts.startTimeoutMs ?? 10_000
   const stopTimeoutMs = opts.stopTimeoutMs ?? 5_000
+  // `mihomo -t` may synchronously download missing GEO data on a fresh homeDir.
+  // Mihomo gives each download up to 90s and may initialize multiple GEO assets
+  // sequentially, so the old 3s watchdog killed every first validation that
+  // referenced GEOIP/fallback-filter before the kernel could finish (#2118,
+  // #2121). Five minutes stays bounded without racing Mihomo's own downloads.
+  const validateTimeoutMs = opts.validateTimeoutMs ?? 300_000
   const mixedPort = opts.mixedPort
   const autoRestart = opts.autoRestart ?? true
   const maxRestarts = opts.maxRestarts ?? 3
@@ -105,11 +117,26 @@ export function createSupervisor(
     }
   }
 
+  // The readiness poll opens a *client* socket, so it must target loopback, not
+  // the wildcard bind host. The server binds external-controller on 0.0.0.0 so
+  // the published container port is reachable, but connecting a client to
+  // 0.0.0.0 (or ::) isn't routable on every host — on some NAS/Docker network
+  // stacks it fails, so every poll misses, the start timeout elapses, and the
+  // supervisor SIGKILLs an otherwise-healthy kernel: "errored (pid N)" with a
+  // dashboard that can't reach the core (#2098). Rewrite a wildcard host to
+  // 127.0.0.1 for the poll only; the injected bind address is untouched.
   function versionUrl(): string {
-    const base = state.externalController.startsWith('http')
-      ? state.externalController
-      : `http://${state.externalController}`
-    return `${base}/version`
+    const addr = state.externalController
+    const withScheme = addr.startsWith('http') ? addr : `http://${addr}`
+    try {
+      const u = new URL(withScheme)
+      // hostname is bracketless '::' on some Node versions, '[::]' on others.
+      const WILDCARD = new Set(['0.0.0.0', '::', '[::]', ''])
+      if (WILDCARD.has(u.hostname)) u.hostname = '127.0.0.1'
+      return `${u.origin}/version`
+    } catch {
+      return `${withScheme}/version`
+    }
   }
 
   async function pollReady(deadline: number): Promise<boolean> {
@@ -155,15 +182,39 @@ export function createSupervisor(
   // We rewrite the active YAML in place: strip any top-level external-controller/
   // secret/mixed-port lines the profile carried, then prepend our managed values
   // so state.externalController/secret (and the optional mixedPort) are authoritative.
+  // A managed mixed port must also be the sole listener on that number: mihomo
+  // otherwise keeps the earlier port/socks-port listener and silently reports
+  // mixed-port=0 at runtime even though active.yaml still says 7890 (#2136).
   async function injectClashConfig(): Promise<void> {
     let existing = ''
     if (existsSync(opts.activeConfigPath)) {
       existing = await readFile(opts.activeConfigPath, 'utf8')
     }
-    const STRIP = /^(?:external-controller|secret|mixed-port)\s*:/
+    const managedKeys = new Set(['external-controller', 'secret', 'mixed-port'])
+    const listenerPortKeys = new Set([
+      'port',
+      'socks-port',
+      'redir-port',
+      'tproxy-port',
+    ])
+    const shouldStripTopLevelKey = (line: string): boolean => {
+      const separator = line.indexOf(':')
+      if (separator === -1) return false
+      // trimEnd deliberately preserves leading indentation: nested keys with
+      // these names belong to their own mapping and must remain untouched.
+      const key = line.slice(0, separator).trimEnd()
+      if (managedKeys.has(key)) return true
+      if (mixedPort == null || !listenerPortKeys.has(key)) return false
+      try {
+        return parse(line.slice(separator + 1)) === mixedPort
+      } catch {
+        // Leave malformed/user-authored YAML for mihomo's validator to report.
+        return false
+      }
+    }
     const kept = existing
       .split('\n')
-      .filter((line) => !STRIP.test(line))
+      .filter((line) => !shouldStripTopLevelKey(line))
       .join('\n')
     const header = [
       `external-controller: ${state.externalController}`,
@@ -326,17 +377,65 @@ export function createSupervisor(
         let out = ''
         proc.stdout?.on('data', (c: Buffer) => (out += c.toString()))
         proc.stderr?.on('data', (c: Buffer) => (out += c.toString()))
-        const t = setTimeout(() => {
-          if (proc.pid) killProcOf(proc, 'SIGKILL')
-          resolve({ valid: false, message: 'validate timeout' })
-        }, 3000)
+
+        let settled = false
+        let timeoutHandle: ReturnType<typeof setTimeout> | undefined
+        let killGraceHandle: ReturnType<typeof setTimeout> | undefined
+        let timedOut = false
+        const timeoutResult = () => {
+          const detail = out.trim()
+          return {
+            valid: false,
+            message: `validate timeout after ${validateTimeoutMs}ms${detail ? `\n${detail}` : ''}`,
+          }
+        }
+        const finish = (result: { valid: boolean; message: string }) => {
+          if (settled) return false
+          settled = true
+          if (timeoutHandle !== undefined) clearTimer(timeoutHandle)
+          if (killGraceHandle !== undefined) clearTimer(killGraceHandle)
+          resolve(result)
+          return true
+        }
+
+        timeoutHandle = setTimer(() => {
+          if (settled) return
+          // Set this BEFORE kill: a platform wrapper or test double may emit
+          // exit synchronously, and that exit must still report timeout rather
+          // than turn SIGKILL's exit code into a validation verdict.
+          timedOut = true
+          if (!proc.pid) {
+            finish(timeoutResult())
+            return
+          }
+          try {
+            killProcOf(proc, 'SIGKILL')
+          } catch (err) {
+            out += `\n${err instanceof Error ? err.message : String(err)}`
+            finish(timeoutResult())
+            return
+          }
+          // Usually exit settles the promise. If the OS/helper never reports
+          // it, release the caller after a bounded grace period rather than
+          // hanging forever.
+          if (!settled) {
+            killGraceHandle = setTimer(
+              () => finish(timeoutResult()),
+              VALIDATE_KILL_GRACE_MS,
+            )
+          }
+        }, validateTimeoutMs)
         proc.on('exit', (code: number | null) => {
-          clearTimeout(t)
-          resolve({ valid: code === 0, message: out.trim() })
+          finish(
+            timedOut
+              ? timeoutResult()
+              : { valid: code === 0, message: out.trim() },
+          )
         })
         proc.on('error', (err: Error) => {
-          clearTimeout(t)
-          resolve({ valid: false, message: err.message })
+          finish(
+            timedOut ? timeoutResult() : { valid: false, message: err.message },
+          )
         })
       })
     },

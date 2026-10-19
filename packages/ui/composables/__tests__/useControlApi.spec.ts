@@ -137,9 +137,26 @@ describe('composables/useControlApi methods', () => {
     })
   })
 
+  it('updateProfile() forwards updateInterval for auto-update (#2107)', async () => {
+    await useControlApi().updateProfile('id1', { updateInterval: 60 })
+    expect(put).toHaveBeenCalledWith('profiles/id1', {
+      json: { updateInterval: 60 },
+    })
+  })
+
   it('deleteProfile() DELETEs profiles/:id', async () => {
     await useControlApi().deleteProfile('id1')
     expect(del).toHaveBeenCalledWith('profiles/id1')
+  })
+
+  it('rollbackKernel() POSTs kernel/rollback (#2109)', async () => {
+    await useControlApi().rollbackKernel()
+    expect(post).toHaveBeenCalledWith('kernel/rollback')
+  })
+
+  it('recoverKernel() POSTs kernel/recover (#2109)', async () => {
+    await useControlApi().recoverKernel()
+    expect(post).toHaveBeenCalledWith('kernel/recover')
   })
 
   it('duplicateProfile() POSTs profiles/:id/duplicate', async () => {
@@ -153,22 +170,56 @@ describe('composables/useControlApi methods', () => {
     await useControlApi().importProfile('http://sub', 'subname')
     expect(post).toHaveBeenCalledWith('profiles/import', {
       json: { url: 'http://sub', name: 'subname' },
+      timeout: 45_000,
     })
   })
 
   it('activateProfile() POSTs profiles/:id/activate', async () => {
     await useControlApi().activateProfile('id1')
-    expect(post).toHaveBeenCalledWith('profiles/id1/activate')
+    expect(post).toHaveBeenCalledWith('profiles/id1/activate', {
+      timeout: 360_000,
+    })
   })
 
   it('refreshProfile() POSTs profiles/:id/refresh', async () => {
     await useControlApi().refreshProfile('id1')
-    expect(post).toHaveBeenCalledWith('profiles/id1/refresh')
+    expect(post).toHaveBeenCalledWith('profiles/id1/refresh', {
+      timeout: 45_000,
+    })
+  })
+
+  it('refreshAndActivateProfile() POSTs profiles/:id/refresh-and-activate (#2108)', async () => {
+    await useControlApi().refreshAndActivateProfile('id1')
+    expect(post).toHaveBeenCalledWith('profiles/id1/refresh-and-activate', {
+      timeout: 390_000,
+    })
   })
 
   it('validateProfile() POSTs profiles/:id/validate', async () => {
     await useControlApi().validateProfile('id1')
-    expect(post).toHaveBeenCalledWith('profiles/id1/validate')
+    expect(post).toHaveBeenCalledWith('profiles/id1/validate', {
+      timeout: 330_000,
+    })
+  })
+
+  it('uses the visual profile editor routes', async () => {
+    const api = useControlApi()
+    const patch = { version: 1 as const, baseRevision: 'rev', operations: [] }
+    await api.getProfileEditor('id1')
+    await api.previewProfileEditor('id1', patch)
+    await api.applyProfileEditor('id1', patch)
+    await api.resetProfileEditorOverlay('id1')
+    expect(get).toHaveBeenCalledWith('profiles/id1/editor')
+    expect(post).toHaveBeenCalledWith('profiles/id1/editor/preview', {
+      json: { patch },
+    })
+    expect(put).toHaveBeenCalledWith('profiles/id1/editor', {
+      json: { patch },
+      timeout: 360_000,
+    })
+    expect(del).toHaveBeenCalledWith('profiles/id1/editor/overlay', {
+      timeout: 360_000,
+    })
   })
 
   it('logsUrl() returns the SSE URL with ?token=', () => {

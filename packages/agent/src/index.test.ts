@@ -46,6 +46,7 @@ describe('createAgent', () => {
         'webdav-backup',
         'runtime-config',
         'config-sections',
+        'visual-config-editor',
       ],
     })
     expect(info.platform).toMatchObject({
@@ -73,6 +74,12 @@ describe('createAgent', () => {
   it('info().features always includes config-sections (active-profile YAML editing)', () => {
     const agent = createAgent(opts())
     expect(agent.info().features).toContain('config-sections')
+  })
+
+  it('info().features always includes visual-config-editor', () => {
+    const agent = createAgent(opts())
+    expect(agent.info().features).toContain('visual-config-editor')
+    expect(agent.profileEditor).toBeDefined()
   })
 
   it('info().features excludes system-proxy when no controller is injected', () => {
@@ -137,6 +144,7 @@ describe('createAgent', () => {
     expect(typeof createProfileStore).toBe('function')
     expect(typeof createControlRouter).toBe('function')
     expect(typeof mihomoAsset).toBe('function')
-    expect(MIHOMO_VERSION).toMatch(/^v\d/)
+    expect(MIHOMO_VERSION.startsWith('v')).toBe(true)
+    expect(Number.isInteger(Number(MIHOMO_VERSION[1]))).toBe(true)
   })
 })

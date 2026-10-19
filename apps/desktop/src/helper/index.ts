@@ -46,6 +46,10 @@ export interface PrivilegedKernelDeps {
   statPath?: StatPathFn
   /** Platform (gates the POSIX writable-bit check); defaults to process.platform. */
   platform?: NodeJS.Platform
+  /** Grace period before escalating SIGTERM to SIGKILL; defaults to 5s. */
+  stopTimeoutMs?: number
+  /** Bound the wait for exit after SIGKILL; defaults to 1s. */
+  killTimeoutMs?: number
 }
 
 /**
@@ -115,11 +119,56 @@ export function createPrivilegedKernel(
       return { isFile: s.isFile(), mode: s.mode }
     })
   const platform = deps.platform ?? process.platform
+  const stopTimeoutMs = deps.stopTimeoutMs ?? 5_000
+  const killTimeoutMs = deps.killTimeoutMs ?? 1_000
 
   let child: ChildProcess | undefined
+  let spawned = false
+  let stopping: { proc: ChildProcess; promise: Promise<void> } | undefined
 
   function isRunning(): boolean {
-    return child !== undefined && child.exitCode === null && !child.killed
+    return (
+      child !== undefined &&
+      spawned &&
+      child.exitCode === null &&
+      child.signalCode === null
+    )
+  }
+
+  function stopProcess(proc: ChildProcess): Promise<void> {
+    return new Promise((resolve, reject) => {
+      let timer: ReturnType<typeof setTimeout>
+      const finish = (error?: Error): void => {
+        clearTimeout(timer)
+        proc.removeListener('exit', onExit)
+        proc.removeListener('close', onExit)
+        proc.removeListener('error', onError)
+        if (error) reject(error)
+        else resolve()
+      }
+      const onExit = (): void => finish()
+      const onError = (error: Error): void => finish(error)
+      proc.once('exit', onExit)
+      // A spawn failure emits close without exit.
+      proc.once('close', onExit)
+      proc.once('error', onError)
+
+      timer = setTimeout(() => {
+        timer = setTimeout(() => {
+          finish(new Error('helper: kernel did not exit after SIGKILL'))
+        }, killTimeoutMs)
+        try {
+          proc.kill('SIGKILL')
+        } catch (error) {
+          finish(error instanceof Error ? error : new Error(String(error)))
+        }
+      }, stopTimeoutMs)
+      try {
+        proc.kill('SIGTERM')
+      } catch (error) {
+        finish(error instanceof Error ? error : new Error(String(error)))
+      }
+    })
   }
 
   return {
@@ -136,24 +185,51 @@ export function createPrivilegedKernel(
         platform,
       )
       // Replace any prior process first so we never leak a privileged kernel.
-      if (isRunning()) await this.stop()
+      if (child) await this.stop()
 
       const proc = spawn(binaryPath, ['-d', homeDir, '-f', configPath], {
         stdio: 'ignore',
       })
       child = proc
+      spawned = false
       proc.on('exit', () => {
-        if (child === proc) child = undefined
+        if (child === proc) {
+          child = undefined
+          spawned = false
+        }
       })
       proc.on('error', (err) => logError(err))
+
+      await new Promise<void>((resolve, reject) => {
+        const onSpawn = (): void => {
+          proc.removeListener('error', onError)
+          if (child === proc) spawned = true
+          resolve()
+        }
+        const onError = (error: Error): void => {
+          proc.removeListener('spawn', onSpawn)
+          if (child === proc) child = undefined
+          reject(error)
+        }
+        proc.once('spawn', onSpawn)
+        proc.once('error', onError)
+      })
 
       return { ok: true, running: isRunning() }
     },
     async stop(): Promise<void> {
       const proc = child
-      child = undefined
-      if (!proc || proc.exitCode !== null || proc.killed) return
-      proc.kill()
+      if (!proc || proc.exitCode !== null || proc.signalCode !== null) return
+      if (stopping?.proc === proc) return stopping.promise
+      // killed only records whether a signal was sent; the process may still
+      // own its listeners/routes until exit. Keep ownership until it exits.
+      const promise = stopProcess(proc)
+      stopping = { proc, promise }
+      try {
+        await promise
+      } finally {
+        if (stopping?.promise === promise) stopping = undefined
+      }
     },
     status(): HelperKernelResult {
       return { ok: true, running: isRunning() }

@@ -462,7 +462,7 @@ async function copyCell(
 /* CSS variables and color-mix utilities that can't be done with Tailwind */
 .conn-table-container {
   --conn-border: color-mix(
-    in oklch,
+    in oklab,
     var(--color-base-content) 10%,
     transparent
   );
@@ -473,25 +473,25 @@ async function copyCell(
 }
 
 .conn-th {
-  color: color-mix(in oklch, var(--color-base-content) 70%, transparent);
+  color: color-mix(in oklab, var(--color-base-content) 70%, transparent);
   border-bottom: 1px solid var(--conn-border);
 }
 
 .conn-group-btn {
-  color: color-mix(in oklch, var(--color-base-content) 50%, transparent);
+  color: color-mix(in oklab, var(--color-base-content) 50%, transparent);
 }
 
 .conn-group-btn:hover {
   color: var(--color-primary);
-  background: color-mix(in oklch, var(--color-primary) 10%, transparent);
+  background: color-mix(in oklab, var(--color-primary) 10%, transparent);
 }
 
 .conn-group-row {
-  background: color-mix(in oklch, var(--color-primary) 5%, transparent);
+  background: color-mix(in oklab, var(--color-primary) 5%, transparent);
 }
 
 .conn-group-row:hover {
-  background: color-mix(in oklch, var(--color-primary) 10%, transparent);
+  background: color-mix(in oklab, var(--color-primary) 10%, transparent);
 }
 
 .conn-group-cell {
@@ -499,12 +499,12 @@ async function copyCell(
 }
 
 .conn-group-icon {
-  background: color-mix(in oklch, var(--color-primary) 15%, transparent);
+  background: color-mix(in oklab, var(--color-primary) 15%, transparent);
   color: var(--color-primary);
 }
 
 .conn-group-count {
-  color: color-mix(in oklch, var(--color-base-content) 50%, transparent);
+  color: color-mix(in oklab, var(--color-base-content) 50%, transparent);
 }
 
 /* Data row - responsive card to table */
@@ -519,9 +519,9 @@ async function copyCell(
 }
 
 .conn-data-row:hover {
-  background: color-mix(in oklch, var(--color-base-content) 5%, transparent);
+  background: color-mix(in oklab, var(--color-base-content) 5%, transparent);
   box-shadow: 0 2px 8px
-    color-mix(in oklch, var(--color-base-content) 8%, transparent);
+    color-mix(in oklab, var(--color-base-content) 8%, transparent);
 }
 
 @media (min-width: 768px) {
@@ -535,11 +535,11 @@ async function copyCell(
   }
 
   .conn-data-row:nth-child(even) {
-    background: color-mix(in oklch, var(--color-base-content) 2%, transparent);
+    background: color-mix(in oklab, var(--color-base-content) 2%, transparent);
   }
 
   .conn-data-row:hover {
-    background: color-mix(in oklch, var(--color-base-content) 5%, transparent);
+    background: color-mix(in oklab, var(--color-base-content) 5%, transparent);
     box-shadow: none;
   }
 }
@@ -554,11 +554,11 @@ async function copyCell(
 }
 
 .force-table .conn-data-row:nth-child(even) {
-  background: color-mix(in oklch, var(--color-base-content) 2%, transparent);
+  background: color-mix(in oklab, var(--color-base-content) 2%, transparent);
 }
 
 .force-table .conn-data-row:hover {
-  background: color-mix(in oklch, var(--color-base-content) 5%, transparent);
+  background: color-mix(in oklab, var(--color-base-content) 5%, transparent);
   box-shadow: none;
 }
 
@@ -573,33 +573,31 @@ async function copyCell(
   }
 }
 
-/* Table cells - responsive layout */
+/* Table cells - responsive layout. On narrow screens each field gets a full
+   row, with its label and value aligned horizontally. The previous 2/3-column
+   layout left long values such as host, chains and flow with only half of the
+   card width, which made phone layouts wrap heavily and pair unrelated fields
+   according to the user's column order. */
 .conn-td {
-  width: 50%;
-  min-width: 50%;
+  display: grid;
+  grid-template-columns: minmax(5.5rem, 36%) minmax(0, 1fr);
+  align-items: start;
+  column-gap: 0.75rem;
+  width: 100%;
+  min-width: 0;
+  padding: 0.5rem 0.25rem;
+  text-align: left;
+  border-bottom: 1px solid
+    color-mix(in oklab, var(--color-base-content) 6%, transparent);
 }
 
-.conn-td:nth-child(2n) {
-  text-align: right;
-}
-
-@media (min-width: 640px) {
-  .conn-td {
-    width: 33.33%;
-    min-width: 33.33%;
-  }
-
-  .conn-td:nth-child(2n) {
-    text-align: left;
-  }
-
-  .conn-td:nth-child(3n) {
-    text-align: right;
-  }
+.conn-td:last-child {
+  border-bottom: none;
 }
 
 @media (min-width: 768px) {
   .conn-td {
+    display: table-cell;
     width: auto;
     min-width: 0;
     padding: 0.5rem 0.625rem; /* tighter vertical to make room for two lines */
@@ -607,11 +605,12 @@ async function copyCell(
     vertical-align: middle;
     white-space: nowrap;
     border-bottom: 1px solid
-      color-mix(in oklch, var(--color-base-content) 5%, transparent);
+      color-mix(in oklab, var(--color-base-content) 5%, transparent);
   }
 }
 
 .force-table .conn-td {
+  display: table-cell;
   width: auto;
   min-width: 0;
   padding: 0.5rem 0.625rem;
@@ -619,15 +618,49 @@ async function copyCell(
   vertical-align: middle;
   white-space: nowrap;
   border-bottom: 1px solid
-    color-mix(in oklch, var(--color-base-content) 5%, transparent);
+    color-mix(in oklab, var(--color-base-content) 5%, transparent);
 }
 
 .conn-td-label {
-  color: color-mix(in oklch, var(--color-base-content) 50%, transparent);
+  color: color-mix(in oklab, var(--color-base-content) 50%, transparent);
+}
+
+@media (max-width: 767px) {
+  .conn-td-label {
+    justify-self: start;
+    width: 100%;
+    margin-bottom: 0;
+    line-height: 1.5;
+    text-align: left;
+  }
+
+  .conn-cell-wrap {
+    position: relative;
+    justify-self: stretch;
+    justify-content: flex-end;
+    width: 100%;
+    text-align: right;
+    overflow-wrap: anywhere;
+  }
+
+  .conn-td--copyable .conn-cell-wrap {
+    padding-left: 1.25rem;
+  }
+
+  /* Keep the value's right edge aligned with non-copyable rows. The copy
+     affordance lives on the left of the value column instead of consuming
+     space after the text and pulling host/chains values inward. */
+  .conn-copy-btn {
+    position: absolute;
+    top: 50%;
+    left: 0;
+    margin-left: 0;
+    transform: translateY(-50%);
+  }
 }
 
 .conn-empty {
-  color: color-mix(in oklch, var(--color-base-content) 50%, transparent);
+  color: color-mix(in oklab, var(--color-base-content) 50%, transparent);
 }
 
 /* GeoIP flag rendered inline before the destination host text. */
@@ -657,7 +690,7 @@ async function copyCell(
   border: none;
   border-radius: 0.25rem;
   background: transparent;
-  color: color-mix(in oklch, var(--color-base-content) 45%, transparent);
+  color: color-mix(in oklab, var(--color-base-content) 45%, transparent);
   cursor: pointer;
   opacity: 0;
   transition:
@@ -668,7 +701,7 @@ async function copyCell(
 
 .conn-copy-btn:hover {
   color: var(--color-primary);
-  background: color-mix(in oklch, var(--color-primary) 10%, transparent);
+  background: color-mix(in oklab, var(--color-primary) 10%, transparent);
 }
 
 /* Reveal the copy button only while hovering the cell (pointer devices). */
@@ -702,7 +735,7 @@ async function copyCell(
   padding: 0.5rem 0.75rem;
   background: var(--color-base-100);
   border: 1px solid
-    color-mix(in oklch, var(--color-base-content) 8%, transparent);
+    color-mix(in oklab, var(--color-base-content) 8%, transparent);
   border-radius: 0.5rem;
   cursor: pointer;
   animation: fadeIn 0.3s ease-out backwards;
@@ -719,9 +752,9 @@ async function copyCell(
   transform: translateY(-1px);
   box-shadow: var(
     --lift-1,
-    0 2px 6px color-mix(in oklch, var(--color-base-content) 8%, transparent)
+    0 2px 6px color-mix(in oklab, var(--color-base-content) 8%, transparent)
   );
-  border-color: color-mix(in oklch, var(--color-base-content) 15%, transparent);
+  border-color: color-mix(in oklab, var(--color-base-content) 15%, transparent);
 }
 
 .conn-card__main {
@@ -747,7 +780,7 @@ async function copyCell(
   min-width: 0;
   font-size: 0.75rem; /* 12px */
   font-weight: 400;
-  color: color-mix(in oklch, var(--color-base-content) 75%, transparent);
+  color: color-mix(in oklab, var(--color-base-content) 75%, transparent);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -762,7 +795,7 @@ async function copyCell(
   font-size: 0.6875rem; /* 11px */
   line-height: 1.35;
   font-weight: 400;
-  color: color-mix(in oklch, var(--color-base-content) 58%, transparent);
+  color: color-mix(in oklab, var(--color-base-content) 58%, transparent);
   font-variant-numeric: tabular-nums;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -775,14 +808,14 @@ async function copyCell(
   gap: 0.5rem;
   padding: 0.375rem 0.5rem;
   margin-top: 0.25rem;
-  background: color-mix(in oklch, var(--color-primary) 5%, transparent);
+  background: color-mix(in oklab, var(--color-primary) 5%, transparent);
   border-radius: 0.375rem;
   cursor: pointer;
   transition: background var(--dur-fast, 160ms) ease;
 }
 
 .conn-card-group:hover {
-  background: color-mix(in oklch, var(--color-primary) 10%, transparent);
+  background: color-mix(in oklab, var(--color-primary) 10%, transparent);
 }
 
 .conn-card-group-icon {
@@ -792,7 +825,7 @@ async function copyCell(
   width: 1.25rem;
   height: 1.25rem;
   border-radius: 0.25rem;
-  background: color-mix(in oklch, var(--color-primary) 15%, transparent);
+  background: color-mix(in oklab, var(--color-primary) 15%, transparent);
   color: var(--color-primary);
   flex-shrink: 0;
 }
@@ -805,7 +838,7 @@ async function copyCell(
 
 .conn-card-group-count {
   font-size: 0.75rem;
-  color: color-mix(in oklch, var(--color-base-content) 50%, transparent);
+  color: color-mix(in oklab, var(--color-base-content) 50%, transparent);
 }
 
 /* General sibling: every card after a group header gets indented to

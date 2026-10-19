@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { MobileNavReselectDetail } from '~/constants'
 import type {
   ProxyNodeWithProvider,
   ProxyProvider,
@@ -6,15 +7,18 @@ import type {
 } from '~/types'
 import {
   IconActivity,
+  IconArrowUp,
   IconBrandSpeedtest,
   IconChevronRight,
   IconChevronsDown,
   IconChevronsUp,
+  IconEdit,
   IconGlobe,
   IconPinnedOff,
   IconReload,
   IconSearch,
   IconSettings,
+  IconTarget,
   IconWand,
   IconX,
 } from '@tabler/icons-vue'
@@ -22,13 +26,16 @@ import byteSize from 'byte-size'
 import Button from '~/components/Button.vue'
 import ConnectivityBoard from '~/components/ConnectivityBoard.vue'
 import ProxyNodeCard from '~/components/ProxyNodeCard.vue'
-import ProxyNodeChip from '~/components/ProxyNodeChip.vue'
 import ProxyNodeListItem from '~/components/ProxyNodeListItem.vue'
 import ProxyNodePreview from '~/components/ProxyNodePreview.vue'
 import ProxyNodeTableRow from '~/components/ProxyNodeTableRow.vue'
 import SubscriptionInfo from '~/components/SubscriptionInfo.vue'
 import { useBatchLatencyTest } from '~/composables/useBatchLatencyTest'
-import { PROXIES_DISPLAY_MODE } from '~/constants'
+import {
+  MOBILE_NAV_RESELECT_EVENT,
+  PROXIES_DISPLAY_MODE,
+  ROUTES,
+} from '~/constants'
 import {
   encodeSvg,
   filterProxiesByAvailability,
@@ -46,6 +53,7 @@ const proxiesStore = useProxiesStore()
 const connectionsStore = useConnectionsStore()
 const configStore = useConfigStore()
 const nodeRecommendationStore = useNodeRecommendationStore()
+const { hasFeature } = useControlInfo()
 
 // Batch latency test
 const {
@@ -57,16 +65,85 @@ const {
 const activeTab = ref<'proxies' | 'proxyProviders'>('proxies')
 const settingsModal = ref<{ open: () => void; close: () => void }>()
 const connectivityModal = ref<{ open: () => void; close: () => void }>()
+const proxyConfigEditor = ref<{ open: () => Promise<void> | void }>()
 const proxyGroupsWrapper = ref<{ isTwoColumns: boolean }>()
 const providersWrapper = ref<{ isTwoColumns: boolean }>()
+const proxyMasterDetail = ref<{
+  scrollToTop: (behavior?: ScrollBehavior) => void
+}>()
 
 // Progressive rendering: only mount a window of nodes per group, growing as the
 // user scrolls near the bottom. Avoids mounting hundreds of cards in one frame
 // when a large group is expanded (the main cause of jank with many nodes).
 const PROXIES_INITIAL_RENDER_COUNT = 50
 const PROXIES_RENDER_STEP = 50
+const SCROLL_TO_TOP_THRESHOLD = 300
 const proxiesScrollEl = ref<HTMLElement | null>(null)
 const providersScrollEl = ref<HTMLElement | null>(null)
+const showScrollToTop = ref(false)
+
+const activeScrollEl = computed(() =>
+  activeTab.value === 'proxies'
+    ? proxiesScrollEl.value
+    : providersScrollEl.value,
+)
+
+function updateScrollToTopVisibility(event: Event) {
+  showScrollToTop.value =
+    (event.currentTarget as HTMLElement).scrollTop > SCROLL_TO_TOP_THRESHOLD
+}
+
+function preferredScrollBehavior(): ScrollBehavior {
+  return window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    ? 'auto'
+    : 'smooth'
+}
+
+function scrollActiveListToTop() {
+  const scrollEl = activeScrollEl.value
+  if (!scrollEl) return
+
+  const behavior = preferredScrollBehavior()
+  scrollEl.scrollTo({
+    top: 0,
+    behavior,
+  })
+  proxyMasterDetail.value?.scrollToTop(behavior)
+}
+
+async function scrollToSelectedProxy(proxyGroup: ProxyType) {
+  // ProxyNodes is lazily mounted by Collapse, so reveal the group before
+  // looking up its selected node.
+  proxiesStore.collapsedMap[proxyGroup.name] = true
+  await nextTick()
+
+  const candidates =
+    proxiesScrollEl.value?.querySelectorAll<HTMLElement>(
+      '[data-proxy-group][data-selected="true"]',
+    ) ?? []
+  const selectedProxy = [...candidates].find(
+    (element) => element.dataset.proxyGroup === proxyGroup.name,
+  )
+
+  selectedProxy?.scrollIntoView({
+    block: 'center',
+    inline: 'nearest',
+    behavior: preferredScrollBehavior(),
+  })
+}
+
+function onMobileNavReselect(event: Event) {
+  const detail = (event as CustomEvent<MobileNavReselectDetail>).detail
+  if (detail?.path === ROUTES.Proxies) scrollActiveListToTop()
+}
+
+async function onProxyConfigSaved() {
+  await proxiesStore.fetchProxies()
+}
+
+watch([activeTab, () => configStore.proxiesDisplayMode], () => {
+  showScrollToTop.value = false
+})
 
 const formatBytes = (bytes: number) => byteSize(bytes).toString()
 
@@ -213,6 +290,11 @@ const sortedNamesByProvider = computed(() => {
 // Fetch proxies on mount
 onMounted(() => {
   proxiesStore.fetchProxies()
+  window.addEventListener(MOBILE_NAV_RESELECT_EVENT, onMobileNavReselect)
+})
+
+onUnmounted(() => {
+  window.removeEventListener(MOBILE_NAV_RESELECT_EVENT, onMobileNavReselect)
 })
 
 // Enable window focus refetch for proxies data
@@ -244,6 +326,11 @@ const ProxyGroupTitle = defineComponent({
       () =>
         recommendedNode.value !== null &&
         recommendedNode.value !== props.proxyGroup.now,
+    )
+    const hasVisibleCurrentProxy = computed(
+      () =>
+        !!props.proxyGroup.now &&
+        props.sortedProxyNames.includes(props.proxyGroup.now),
     )
 
     return () =>
@@ -298,6 +385,26 @@ const ProxyGroupTitle = defineComponent({
               ],
             ),
             h('div', { class: 'flex items-center gap-1.5 shrink-0' }, [
+              // Desktop quick navigation to the selected node in this group.
+              h(
+                Button,
+                {
+                  class:
+                    'hidden sm:flex items-center justify-center w-9 h-9 rounded-lg bg-base-content/6 border border-base-content/8 text-base-content/60 transition-all duration-200 hover:bg-primary/15 hover:border-primary/30 hover:text-primary hover:-translate-y-px hover:shadow-lg hover:shadow-primary/15 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-40',
+                  disabled: !hasVisibleCurrentProxy.value,
+                  title: t('jumpToCurrent'),
+                  'aria-label': `${t('jumpToCurrent')}: ${props.proxyGroup.name}`,
+                  'data-testid': 'jump-to-current',
+                  'data-proxy-group': props.proxyGroup.name,
+                  onClick: (e: MouseEvent) => {
+                    e.stopPropagation()
+                    scrollToSelectedProxy(props.proxyGroup)
+                  },
+                },
+                {
+                  default: () => h(IconTarget, { size: 18 }),
+                },
+              ),
               // Switch to Recommended button
               hasRecommendation.value &&
                 h(
@@ -375,17 +482,17 @@ const ProxyGroupTitle = defineComponent({
             'div',
             {
               class:
-                'badge badge-primary badge-sm inline-flex items-center gap-1',
+                'badge badge-primary badge-sm inline-flex max-w-full items-center gap-1',
             },
             [
               h(
                 'span',
-                { class: 'font-bold' },
+                { class: 'shrink-0 font-bold' },
                 formatProxyType(props.proxyGroup.type, t),
               ),
               props.proxyGroup.now?.length > 0 && [
-                h(IconChevronRight, { size: 18 }),
-                h('span', { class: 'whitespace-nowrap' }, props.proxyGroup.now),
+                h(IconChevronRight, { size: 18, class: 'shrink-0' }),
+                h('span', { class: 'min-w-0 truncate' }, props.proxyGroup.now),
               ],
             ],
           ),
@@ -412,7 +519,6 @@ const ProxyGroupTitle = defineComponent({
 // gets its own page-level branch in the template (see isMasterMode below).
 function nodeComponentFor(mode: string) {
   if (mode === PROXIES_DISPLAY_MODE.LIST) return ProxyNodeListItem
-  if (mode === PROXIES_DISPLAY_MODE.CHIPS) return ProxyNodeChip
   if (mode === PROXIES_DISPLAY_MODE.TABLE) return ProxyNodeTableRow
   return ProxyNodeCard
 }
@@ -477,6 +583,8 @@ const ProxyNodes = defineComponent({
           testUrl: props.proxyGroup.testUrl || null,
           timeout: props.proxyGroup.timeout ?? null,
           isSelected: props.proxyGroup.now === proxyName,
+          'data-proxy-group': props.proxyGroup.name,
+          'data-selected': props.proxyGroup.now === proxyName,
           ...(isCard
             ? {
                 isRecommended: recommendedNode.value === proxyName,
@@ -700,7 +808,7 @@ const ProviderProxyNodes = defineComponent({
 </script>
 
 <template>
-  <div class="flex h-full min-h-0 flex-col gap-3">
+  <div class="relative flex h-full min-h-0 min-w-0 flex-col gap-3">
     <!-- First-run nudge: shown only when the agent is present and no base
          profile exists yet (self-gating; nothing in web mode). -->
     <OnboardingEmptyState context="proxies" />
@@ -757,6 +865,16 @@ const ProviderProxyNodes = defineComponent({
         >
           <IconChevronsUp v-if="anyGroupExpanded" :size="18" />
           <IconChevronsDown v-else :size="18" />
+        </Button>
+
+        <!-- Edit managed proxy definitions -->
+        <Button
+          v-if="activeTab === 'proxies' && hasFeature('visual-config-editor')"
+          class="flex h-9 w-9 items-center justify-center rounded-[0.625rem] border border-primary/20 bg-primary/10 text-primary transition-all duration-200 hover:bg-primary/20"
+          :title="t('editProxies')"
+          @click="proxyConfigEditor?.open()"
+        >
+          <IconEdit :size="16" />
         </Button>
 
         <!-- Test All Groups Button -->
@@ -868,8 +986,9 @@ const ProviderProxyNodes = defineComponent({
     <div
       v-if="activeTab === 'proxies'"
       ref="proxiesScrollEl"
-      class="min-h-0 flex-1 overflow-y-auto"
-      :class="isMasterMode ? 'overflow-hidden' : ''"
+      data-testid="proxies-scroll-container"
+      class="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto"
+      @scroll.passive="updateScrollToTopVisibility"
     >
       <!-- Loading skeleton: first load / refetch before anything resolves -->
       <div
@@ -892,8 +1011,10 @@ const ProviderProxyNodes = defineComponent({
       <template v-else>
         <ProxyMasterDetail
           v-if="isMasterMode"
+          ref="proxyMasterDetail"
           :groups="renderProxies"
           :sorted-names-by-group="sortedNamesByGroup"
+          @scroll="updateScrollToTopVisibility"
         />
         <ProxiesRenderWrapper v-else ref="proxyGroupsWrapper">
           <template v-if="proxyGroupsWrapper?.isTwoColumns" #even>
@@ -982,7 +1103,13 @@ const ProviderProxyNodes = defineComponent({
     </div>
 
     <!-- Proxy Providers Content -->
-    <div v-else ref="providersScrollEl" class="min-h-0 flex-1 overflow-y-auto">
+    <div
+      v-else
+      ref="providersScrollEl"
+      data-testid="providers-scroll-container"
+      class="min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto"
+      @scroll.passive="updateScrollToTopVisibility"
+    >
       <!-- Loading skeleton: first load before providers resolve -->
       <div
         v-if="
@@ -1083,6 +1210,24 @@ const ProviderProxyNodes = defineComponent({
       </ProxiesRenderWrapper>
     </div>
 
+    <Transition
+      enter-active-class="transition duration-200 ease-out"
+      enter-from-class="translate-y-2 scale-90 opacity-0"
+      leave-active-class="transition duration-150 ease-in"
+      leave-to-class="translate-y-2 scale-90 opacity-0"
+    >
+      <Button
+        v-if="showScrollToTop"
+        data-testid="scroll-to-top"
+        class="absolute right-[max(0.75rem,env(safe-area-inset-right))] bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-30 flex size-11 items-center justify-center rounded-full border border-primary/30 bg-primary text-primary-content shadow-lg shadow-primary/25 hover:-translate-y-0.5 hover:bg-primary/90"
+        :aria-label="t('backToTop')"
+        :title="t('backToTop')"
+        @click="scrollActiveListToTop"
+      >
+        <IconArrowUp :size="20" />
+      </Button>
+    </Transition>
+
     <!-- Settings Modal -->
     <Modal ref="settingsModal" :title="t('proxiesSettings')">
       <template #icon>
@@ -1112,6 +1257,23 @@ const ProviderProxyNodes = defineComponent({
             class="input-bordered input w-full"
             type="text"
           />
+        </div>
+
+        <div class="flex flex-col">
+          <ConfigTitle with-divider>
+            {{ t('latencyTestUrlSource') }}
+          </ConfigTitle>
+          <select
+            v-model="configStore.latencyTestUrlSource"
+            class="select-bordered select w-full"
+          >
+            <option value="core">
+              {{ t('latencyTestUrlSourceCore') }}
+            </option>
+            <option value="dashboard">
+              {{ t('latencyTestUrlSourceDashboard') }}
+            </option>
+          </select>
         </div>
 
         <div>
@@ -1171,19 +1333,6 @@ const ProviderProxyNodes = defineComponent({
           <div class="flex w-full justify-center">
             <input
               v-model="configStore.renderProxiesInTwoColumns"
-              class="toggle toggle-primary"
-              type="checkbox"
-            />
-          </div>
-        </div>
-
-        <div>
-          <ConfigTitle with-divider>
-            {{ t('stickyGroupHeader') }}
-          </ConfigTitle>
-          <div class="flex w-full justify-center">
-            <input
-              v-model="configStore.stickyGroupHeader"
               class="toggle toggle-primary"
               type="checkbox"
             />
@@ -1266,6 +1415,8 @@ const ProviderProxyNodes = defineComponent({
 
       <ConnectivityBoard />
     </Modal>
+
+    <ProxyConfigEditor ref="proxyConfigEditor" @saved="onProxyConfigSaved" />
   </div>
 </template>
 

@@ -93,7 +93,7 @@ describe('fetchKernel', () => {
       fetchKernel('linux', 'arm64', dest, {
         fetch: fakeFetch as unknown as typeof fetch,
       }),
-    ).rejects.toThrow(/404/)
+    ).rejects.toThrow('404')
   })
 
   it('never targets a legacy -go1xx asset name', async () => {
@@ -108,7 +108,7 @@ describe('fetchKernel', () => {
       (
         fakeFetch.mock.calls as unknown as [string][][]
       )[0]![0] as unknown as string,
-    ).not.toMatch(/-go\d/)
+    ).not.toContain('-go')
   })
 
   it('uses an injected version for the download URL', async () => {
@@ -194,12 +194,30 @@ describe('listMihomoVersions', () => {
     expect(seenHeaders['User-Agent']).toBeTruthy()
   })
 
+  it('authenticates GitHub release requests when a token is configured (#2135)', async () => {
+    let seenHeaders: Record<string, string> = {}
+    const fakeFetch = vi.fn(async (_url: string, init?: RequestInit) => {
+      seenHeaders = (init?.headers ?? {}) as Record<string, string>
+      return new Response(JSON.stringify(releasesPayload()), { status: 200 })
+    })
+
+    await listMihomoVersions({
+      fetch: fakeFetch as unknown as typeof fetch,
+      githubToken: 'github-token',
+    })
+
+    expect(seenHeaders).toMatchObject({
+      Accept: 'application/vnd.github+json',
+      Authorization: 'Bearer github-token',
+    })
+  })
+
   it('throws on a non-200 response', async () => {
     const fakeFetch = vi.fn(
       async () => new Response('rate limited', { status: 403 }),
     )
     await expect(
       listMihomoVersions({ fetch: fakeFetch as unknown as typeof fetch }),
-    ).rejects.toThrow(/403/)
+    ).rejects.toThrow('403')
   })
 })

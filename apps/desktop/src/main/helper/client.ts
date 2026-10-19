@@ -174,6 +174,17 @@ export function createHelperClient(
       clearTimeout(next.timer)
       if (res.ok) {
         next.resolve(res)
+      } else if (
+        res.type === 'getVersion' &&
+        res.version !== HELPER_PROTOCOL_VERSION &&
+        res.error.startsWith('helper: protocol version mismatch')
+      ) {
+        // Older helpers reject a getVersion request from a newer protocol.
+        // Preserve the typed mismatch so the runtime can replace that install;
+        // authentication errors must still propagate without reinstalling.
+        next.reject(
+          new HelperVersionMismatchError(res.version, HELPER_PROTOCOL_VERSION),
+        )
       } else {
         // Surface the server's failure — never swallow it.
         next.reject(

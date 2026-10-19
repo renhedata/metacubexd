@@ -281,11 +281,11 @@ watch(
 </script>
 
 <template>
-  <!-- p-1: overflow-y-auto forces overflow-x to compute to auto, which clips
-       the config-card box-shadow ring on the left/right edges; padding on all
-       sides also gives the first/last card's top/bottom ring room (gap-4 only
-       spaces the inner edges). -->
   <div class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-1">
+    <!-- p-1: overflow-y-auto forces overflow-x to compute to auto, which clips
+         the config-card box-shadow ring on the left/right edges; padding on all
+         sides also gives the first/last card's top/bottom ring room (gap-4 only
+         spaces the inner edges). -->
     <!-- Loading State -->
     <div
       v-if="isLoading && !isError"
@@ -325,11 +325,11 @@ watch(
           </p>
         </div>
         <div class="flex gap-2">
-          <button class="btn btn-sm btn-primary" @click="$router.go(0)">
+          <button class="btn btn-primary btn-sm" @click="$router.go(0)">
             {{ t('retry') }}
           </button>
           <button
-            class="btn btn-outline btn-sm btn-info"
+            class="btn btn-outline btn-info btn-sm"
             @click="switchEndpoint"
           >
             {{ t('switchEndpoint') }}
@@ -361,42 +361,73 @@ watch(
               />
             </svg>
           </div>
-          <div>
+          <div class="min-w-0">
             <h1 class="text-xl font-bold tracking-tight">{{ t('config') }}</h1>
-            <p class="text-xs opacity-60">
-              {{ endpointStore.currentEndpoint?.url }}
-            </p>
+            <button
+              class="flex max-w-full items-center gap-1 text-xs opacity-60 transition-colors hover:opacity-100"
+              :title="t('switchEndpoint')"
+              @click="switchEndpoint"
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                class="size-3 shrink-0"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5" />
+              </svg>
+              <span class="truncate">{{
+                endpointStore.currentEndpoint?.url
+              }}</span>
+            </button>
           </div>
         </div>
         <Versions
+          horizontal
           :frontend-version="frontendVersion"
           :backend-version="backendVersion || ''"
         />
       </div>
 
       <!-- Mobile Section Tabs -->
-      <div class="flex gap-1 rounded-lg bg-base-200 p-1 sm:hidden">
+      <div
+        class="flex gap-1 rounded-lg border border-base-content/10 bg-base-200 p-1 sm:hidden"
+      >
         <button
-          class="tab"
-          :class="{ 'tab-active': activeSection === 'core' }"
+          class="press-tactile flex min-w-0 flex-1 cursor-pointer items-center justify-center rounded-md border-none bg-transparent px-1.5 py-1.5 text-xs font-medium text-base-content/70 transition-colors duration-200 hover:text-base-content"
+          :class="
+            activeSection === 'core'
+              ? 'bg-primary/15 text-primary hover:text-primary'
+              : ''
+          "
           @click="activeSection = 'core'"
         >
-          {{ t('coreConfig') }}
+          <span class="truncate">{{ t('coreConfig') }}</span>
         </button>
         <button
-          class="tab"
-          :class="{ 'tab-active': activeSection === 'xd' }"
+          class="press-tactile flex min-w-0 flex-1 cursor-pointer items-center justify-center rounded-md border-none bg-transparent px-1.5 py-1.5 text-xs font-medium text-base-content/70 transition-colors duration-200 hover:text-base-content"
+          :class="
+            activeSection === 'xd'
+              ? 'bg-primary/15 text-primary hover:text-primary'
+              : ''
+          "
           @click="activeSection = 'xd'"
         >
-          {{ t('xdConfig') }}
+          <span class="truncate">{{ t('xdConfig') }}</span>
         </button>
         <button
           v-if="!isSingBox"
-          class="tab"
-          :class="{ 'tab-active': activeSection === 'tools' }"
+          class="press-tactile flex min-w-0 flex-1 cursor-pointer items-center justify-center rounded-md border-none bg-transparent px-1.5 py-1.5 text-xs font-medium text-base-content/70 transition-colors duration-200 hover:text-base-content"
+          :class="
+            activeSection === 'tools'
+              ? 'bg-primary/15 text-primary hover:text-primary'
+              : ''
+          "
           @click="activeSection = 'tools'"
         >
-          {{ t('dnsQuery') }}
+          <span class="truncate">{{ t('dnsQuery') }}</span>
         </button>
       </div>
 
@@ -542,7 +573,7 @@ watch(
                   id="interface-name"
                   v-model="generalConfig.form.interfaceName"
                   type="text"
-                  class="input-bordered input input-sm w-32"
+                  class="input-bordered input w-32 input-sm"
                   @change="
                     generalConfig.save(
                       'interface-name',
@@ -638,7 +669,7 @@ watch(
 
                   <Button
                     v-if="tunConfig.showRecoverButton.value"
-                    class="btn-outline btn-sm btn-error"
+                    class="btn-outline btn-error btn-sm"
                     :loading="tunConfig.busy.value"
                     @click="onRecoverNetwork"
                   >
@@ -660,7 +691,7 @@ watch(
 
                   <Button
                     v-if="tunConfig.showUninstallButton.value"
-                    class="self-start text-error btn-ghost btn-xs"
+                    class="self-start btn-ghost text-error btn-xs"
                     :loading="tunConfig.busy.value"
                     @click="onUninstallHelper"
                   >
@@ -719,7 +750,7 @@ watch(
                     id="device-name"
                     v-model="tunForm.tunDevice"
                     type="text"
-                    class="input-bordered input input-sm w-32"
+                    class="input-bordered input w-32 input-sm"
                     @change="saveTun({ device: tunForm.tunDevice })"
                   />
                 </div>
@@ -741,7 +772,7 @@ watch(
                       :id="port.key"
                       v-model.number="generalConfig.form[port.key]"
                       type="number"
-                      class="input-bordered input input-sm w-full font-mono"
+                      class="input-bordered input w-full font-mono input-sm"
                       :placeholder="t('port', { name: port.label })"
                       @change="
                         generalConfig.save(
@@ -825,7 +856,7 @@ watch(
                     type="url"
                     required
                     :placeholder="t('collectorURLPlaceholder')"
-                    class="input-bordered input input-sm w-full"
+                    class="input-bordered input w-full input-sm"
                   />
                   <span class="text-xs opacity-40">{{
                     t('collectorURLHint')
@@ -839,7 +870,7 @@ watch(
                     v-model="configStore.collectorToken"
                     type="password"
                     required
-                    class="input-bordered input input-sm w-full"
+                    class="input-bordered input w-full input-sm"
                   />
                 </label>
                 <span
@@ -1026,13 +1057,13 @@ watch(
                   @change="onUploadBackground"
                 />
                 <Button
-                  class="flex-1 btn-outline btn-sm btn-primary"
+                  class="flex-1 btn-outline btn-primary btn-sm"
                   @click="backgroundFileInput?.click()"
                 >
                   {{ t('uploadImage') }}
                 </Button>
                 <Button
-                  class="btn-outline btn-sm btn-error"
+                  class="btn-outline btn-error btn-sm"
                   @click="onClearBackground"
                 >
                   {{ t('clearAll') }}
@@ -1263,7 +1294,7 @@ watch(
                   type="number"
                   min="1"
                   max="60"
-                  class="input-bordered input input-sm w-20 text-center"
+                  class="input-bordered input w-20 text-center input-sm"
                 />
               </div>
 
@@ -1633,7 +1664,7 @@ watch(
                     id="dns-fake-ip-range"
                     v-model="dnsSettings.form.fakeIpRange"
                     type="text"
-                    class="input-bordered input input-sm w-full font-mono"
+                    class="input-bordered input w-full font-mono input-sm"
                     placeholder="198.18.0.1/16"
                   />
                 </fieldset>
@@ -1815,20 +1846,20 @@ watch(
   overflow: hidden;
   border-radius: 1rem;
   border: 1px solid
-    color-mix(in oklch, var(--color-base-content) 10%, transparent);
+    color-mix(in oklab, var(--color-base-content) 10%, transparent);
   backdrop-filter: blur(4px);
   transition: all 0.3s;
-  background-color: color-mix(in oklch, var(--color-base-200) 50%, transparent);
+  background-color: color-mix(in oklab, var(--color-base-200) 50%, transparent);
   box-shadow:
-    0 0 0 1px color-mix(in oklch, var(--color-primary) 20%, transparent),
-    0 4px 24px -4px color-mix(in oklch, var(--color-primary) 10%, transparent);
+    0 0 0 1px color-mix(in oklab, var(--color-primary) 20%, transparent),
+    0 4px 24px -4px color-mix(in oklab, var(--color-primary) 10%, transparent);
 }
 
 .config-card:hover {
-  border-color: color-mix(in oklch, var(--color-primary) 30%, transparent);
+  border-color: color-mix(in oklab, var(--color-primary) 30%, transparent);
   box-shadow:
-    0 0 0 1px color-mix(in oklch, var(--color-primary) 30%, transparent),
-    0 8px 32px -4px color-mix(in oklch, var(--color-primary) 10%, transparent);
+    0 0 0 1px color-mix(in oklab, var(--color-primary) 30%, transparent),
+    0 8px 32px -4px color-mix(in oklab, var(--color-primary) 10%, transparent);
 }
 
 /* Animations */

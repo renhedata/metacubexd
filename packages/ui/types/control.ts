@@ -3,11 +3,7 @@
 // Mirror of @metacubexd/agent KernelStatus / KernelState (SHARED CONTRACTS).
 // UI-local copies: the UI builds standalone (gh-pages) and never imports the agent.
 export type KernelStatus =
-  | 'stopped'
-  | 'starting'
-  | 'running'
-  | 'stopping'
-  | 'errored'
+  'stopped' | 'starting' | 'running' | 'stopping' | 'errored'
 
 export interface KernelState {
   status: KernelStatus
@@ -39,8 +35,18 @@ export interface ProfileMeta {
   enabled?: boolean
   url?: string
   userAgent?: string
+  // minutes; remote-only. Drives the AIO server's auto-update scheduler (0 or
+  // undefined => auto-update off). SHARED CONTRACTS.
+  updateInterval?: number
+  baseProfileId?: string
+  managedBy?: 'visual-editor'
+  editorStatus?: 'clean' | 'conflicted'
   updatedAt: number
   subscriptionInfo?: ProfileSubscriptionInfo
+  // Derived (not stored): true on the base profile the agent recorded as the
+  // active one in state.json. Lets the profiles page persistently mark the
+  // active card instead of losing the badge on reload (#2148).
+  active?: boolean
 }
 
 // GET /api/control/info
@@ -54,7 +60,34 @@ export type ControlFeature =
   | 'webdav-backup'
   | 'runtime-config'
   | 'config-sections'
+  | 'visual-config-editor'
   | 'tun'
+
+export interface ProfileEditorSnapshot {
+  profile: ProfileMeta
+  active: boolean
+  revision: string
+  editableYaml: string
+  composedYaml: string
+  schemaVersion: string
+  composition: ProfileMeta[]
+  diagnostics: Array<{
+    path: Array<string | number>
+    code: string
+    message: string
+    severity: 'error' | 'warning'
+  }>
+  conflicts: Array<{
+    operation: import('@metacubexd/config-editor').ConfigPatchOperation
+    path: Array<string | number>
+    reason: 'changed' | 'missing' | 'duplicate' | 'invalid-target'
+    current?: unknown
+  }>
+}
+
+export interface ProfileEditorPreview extends ProfileEditorSnapshot {
+  patch: import('@metacubexd/config-editor').ConfigPatchV1
+}
 export interface ControlInfo {
   hasAgent: boolean
   version: string

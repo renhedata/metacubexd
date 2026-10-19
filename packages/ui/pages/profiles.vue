@@ -2,6 +2,7 @@
 <script setup lang="ts">
 import type { ProfileMeta } from '~/types/control'
 import {
+  IconBraces,
   IconCopy,
   IconPencil,
   IconPlayerPlay,
@@ -11,8 +12,11 @@ import {
   IconTrash,
 } from '@tabler/icons-vue'
 import { toast } from 'vue-sonner'
+import { onControlInvalidate } from '~/composables/useControlSync'
+import { controlErrorMessage } from '~/utils/controlError'
 
 const { t, locale } = useI18n()
+const router = useRouter()
 const { hasFeature, ready } = useControlInfo()
 const kernelStore = useKernelStore()
 const { isShareable, qrSvg } = useShareQr()
@@ -39,11 +43,13 @@ const {
   duplicate,
   remove,
   refreshRemote,
+  refreshAndApply,
   save,
   saveMerge,
   saveScript,
   setEnabled,
   setScriptEnabled,
+  setUpdateInterval,
   load,
   validate,
   activate,
@@ -82,16 +88,24 @@ onMounted(() => {
     refresh().catch((err) => {
       console.error('[profiles] initial load failed', err)
       toast.error(t('profilesActionFailed'), {
-        description: err instanceof Error ? err.message : String(err),
+        description: controlErrorMessage(err),
       })
     })
+})
+
+// Re-sync the active marker + list when a profile is activated from outside the
+// SPA (tray submenu, AIO scheduler). desktop-sync invalidates vue-query caches,
+// but this list lives in a local ref, so reload it on backend invalidate. A
+// no-op on web builds (no bridge). (#2148)
+onControlInvalidate(() => {
+  if (hasFeature('profiles')) void refresh()
 })
 
 // Uniform failure feedback for the actions whose composable methods rethrow
 // (the merge/script setters self-toast and never reach here).
 const notifyError = (e: unknown) =>
   toast.error(t('profilesActionFailed'), {
-    description: e instanceof Error ? e.message : String(e),
+    description: controlErrorMessage(e),
   })
 
 // Honour prefers-reduced-motion for the one-shot editor scroll: a JS
@@ -254,6 +268,29 @@ const onRefresh = (id: string) =>
   // refreshRemote toasts its own success/failure (incl. the "not remote" case).
   withBusy(`refresh:${id}`, () => refreshRemote(id))
 
+// Refresh + apply: re-fetch the subscription and re-compose + restart so the
+// new nodes actually route (#2108). Separate from onRefresh, which only updates
+// storage. refreshAndApply toasts its own success/failure.
+const onRefreshAndApply = (id: string) =>
+  withBusy(`refresh-apply:${id}`, () => refreshAndApply(id))
+
+// Preset auto-update intervals (minutes). 0 disables; the AIO server scheduler
+// refreshes remote profiles whose interval has elapsed and re-activates the
+// active one so the new subscription takes effect (#2107). Desktop also ticks,
+// notifying on each refresh (apply stays manual there).
+const UPDATE_INTERVAL_PRESETS = [0, 30, 60, 360, 720, 1440] as const
+
+const onUpdateInterval = (p: ProfileMeta, event: Event) => {
+  const minutes = Number((event.target as HTMLSelectElement).value)
+  return withBusy(`interval:${p.id}`, async () => {
+    try {
+      await setUpdateInterval(p.id, minutes)
+    } catch (e) {
+      notifyError(e)
+    }
+  })
+}
+
 const onDuplicate = (p: ProfileMeta) =>
   withBusy(`duplicate:${p.id}`, async () => {
     try {
@@ -355,6 +392,12 @@ const onCopyShareUrl = async () => {
               >
                 {{ t('profilesActive') }}
               </span>
+              <span
+                v-if="p.editorStatus === 'conflicted'"
+                class="badge badge-sm badge-warning"
+              >
+                {{ t('visualEditorConflicts') }}
+              </span>
               <span class="badge badge-ghost badge-sm">{{ p.type }}</span>
             </div>
           </div>
@@ -369,7 +412,48 @@ const onCopyShareUrl = async () => {
 
           <SubscriptionUsageCard :info="p.subscriptionInfo" />
 
+          <!-- Auto-update interval (remote only). The AIO server ticks every
+               minute and refreshes remote profiles whose interval elapsed; a
+               refreshed active profile re-activates so the new subscription
+               routes immediately (#2107). -->
+          <div
+            v-if="p.type === 'remote'"
+            class="mt-2 flex items-center gap-2 text-sm"
+          >
+            <label
+              class="text-base-content/60"
+              :for="`update-interval-${p.id}`"
+            >
+              {{ t('profilesAutoUpdate') }}
+            </label>
+            <select
+              :id="`update-interval-${p.id}`"
+              class="select-bordered select flex-1 select-xs"
+              :value="p.updateInterval ?? 0"
+              :disabled="isBusy(`interval:${p.id}`)"
+              @change="onUpdateInterval(p, $event)"
+            >
+              <option v-for="m in UPDATE_INTERVAL_PRESETS" :key="m" :value="m">
+                {{
+                  m === 0
+                    ? t('profilesAutoUpdateOff')
+                    : m < 60
+                      ? t('profilesAutoUpdateMinutes', { n: m })
+                      : t('profilesAutoUpdateHours', { n: m / 60 })
+                }}
+              </option>
+            </select>
+          </div>
+
           <div class="mt-3 flex flex-wrap gap-2">
+            <Button
+              v-if="hasFeature('visual-config-editor')"
+              class="btn-primary btn-xs"
+              :icon="IconBraces"
+              @click="router.push(`/profiles/${p.id}/edit`)"
+            >
+              {{ t('visualEditor') }}
+            </Button>
             <Button
               class="btn-xs"
               :icon="IconPencil"
@@ -388,6 +472,15 @@ const onCopyShareUrl = async () => {
               {{ t('profilesRefresh') }}
             </Button>
             <Button
+              v-if="p.type === 'remote'"
+              class="btn-success btn-xs"
+              :icon="IconRefresh"
+              :loading="isBusy(`refresh-apply:${p.id}`)"
+              @click="onRefreshAndApply(p.id)"
+            >
+              {{ t('profilesRefreshAndApply') }}
+            </Button>
+            <Button
               class="btn-xs"
               :icon="IconCopy"
               :loading="isBusy(`duplicate:${p.id}`)"
@@ -397,7 +490,7 @@ const onCopyShareUrl = async () => {
             </Button>
             <Button
               v-if="p.id !== activeBaseId"
-              class="btn-xs btn-success"
+              class="btn-success btn-xs"
               :icon="IconPlayerPlay"
               :loading="isBusy(`activate:${p.id}`)"
               @click="onActivate(p.id)"
@@ -413,7 +506,7 @@ const onCopyShareUrl = async () => {
               {{ t('profilesShare') }}
             </Button>
             <Button
-              class="btn-xs btn-error"
+              class="btn-error btn-xs"
               :icon="IconTrash"
               :loading="isBusy(`delete:${p.id}`)"
               @click="onRemove(p.id)"
@@ -447,7 +540,7 @@ const onCopyShareUrl = async () => {
               />
             </label>
             <Button
-              class="btn-sm btn-primary"
+              class="btn-primary btn-sm"
               :icon="IconPlus"
               :loading="isBusy('create')"
               @click="onCreate"
@@ -479,7 +572,7 @@ const onCopyShareUrl = async () => {
                   />
                 </label>
                 <Button
-                  class="btn-sm btn-primary"
+                  class="btn-primary btn-sm"
                   :icon="IconPlus"
                   :loading="isBusy('createMerge')"
                   @click="onCreateMerge"
@@ -499,7 +592,15 @@ const onCopyShareUrl = async () => {
                 class="rounded-xl border border-base-content/10 bg-base-200 p-4"
               >
                 <div class="flex items-center justify-between gap-2">
-                  <span class="font-semibold">{{ m.name }}</span>
+                  <span class="flex min-w-0 items-center gap-2 font-semibold">
+                    <span class="truncate">{{ m.name }}</span>
+                    <span
+                      v-if="m.managedBy === 'visual-editor'"
+                      class="badge badge-xs badge-primary"
+                    >
+                      {{ t('visualEditorManaged') }}
+                    </span>
+                  </span>
                   <label class="flex items-center gap-2 text-sm">
                     <span class="text-base-content/60">{{
                       t('profilesMergeEnabled')
@@ -508,7 +609,10 @@ const onCopyShareUrl = async () => {
                       type="checkbox"
                       class="toggle toggle-primary toggle-sm"
                       :checked="m.enabled !== false"
-                      :disabled="isBusy(`toggle:${m.id}`)"
+                      :disabled="
+                        isBusy(`toggle:${m.id}`) ||
+                        m.managedBy === 'visual-editor'
+                      "
                       :aria-label="t('profilesMergeEnabled')"
                       @change="onToggleMerge(m.id, $event)"
                     />
@@ -517,6 +621,7 @@ const onCopyShareUrl = async () => {
 
                 <div class="mt-3 flex flex-wrap gap-2">
                   <Button
+                    v-if="m.managedBy !== 'visual-editor'"
                     class="btn-xs"
                     :icon="IconPencil"
                     :loading="isBusy(`edit:${m.id}`)"
@@ -525,7 +630,7 @@ const onCopyShareUrl = async () => {
                     {{ t('profilesEdit') }}
                   </Button>
                   <Button
-                    class="btn-xs btn-error"
+                    class="btn-error btn-xs"
                     :icon="IconTrash"
                     :loading="isBusy(`delete:${m.id}`)"
                     @click="onRemove(m.id)"
@@ -563,7 +668,7 @@ const onCopyShareUrl = async () => {
                   />
                 </label>
                 <Button
-                  class="btn-sm btn-primary"
+                  class="btn-primary btn-sm"
                   :icon="IconPlus"
                   :loading="isBusy('createScript')"
                   @click="onCreateScript"
@@ -609,7 +714,7 @@ const onCopyShareUrl = async () => {
                     {{ t('profilesEdit') }}
                   </Button>
                   <Button
-                    class="btn-xs btn-error"
+                    class="btn-error btn-xs"
                     :icon="IconTrash"
                     :loading="isBusy(`delete:${s.id}`)"
                     @click="onRemove(s.id)"
@@ -657,7 +762,7 @@ const onCopyShareUrl = async () => {
 
         <div class="mt-3 flex flex-wrap items-center gap-2">
           <Button
-            class="btn-sm btn-primary"
+            class="btn-primary btn-sm"
             :loading="isBusy('editor-save')"
             @click="onSave"
           >
@@ -713,7 +818,7 @@ const onCopyShareUrl = async () => {
 
         <div class="flex w-full items-center gap-2">
           <input
-            class="input-bordered input input-sm flex-1 font-mono text-xs"
+            class="input-bordered input flex-1 font-mono text-xs input-sm"
             :value="shareUrl"
             readonly
             :aria-label="t('profilesShareUrl')"

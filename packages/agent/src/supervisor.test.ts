@@ -98,6 +98,27 @@ describe('createSupervisor — initial state', () => {
     await sup.dispose()
   })
 
+  it('polls loopback, not the 0.0.0.0 wildcard bind host, for readiness (#2098)', async () => {
+    const opts = baseOpts()
+    const proc = new FakeProc()
+    const urls: string[] = []
+    const sup = createSupervisor(
+      { ...opts, externalController: '0.0.0.0:9090' },
+      {
+        spawn: (() => proc) as never,
+        fetch: (async (url: string) => {
+          urls.push(url)
+          return new Response(JSON.stringify({ version: '1' }), { status: 200 })
+        }) as unknown as typeof fetch,
+      },
+    )
+    await sup.start()
+    // The bind address stays 0.0.0.0, but the client poll must hit loopback,
+    // else a host that can't connect to 0.0.0.0 SIGKILLs a healthy kernel.
+    expect(urls[0]).toBe('http://127.0.0.1:9090/version')
+    await sup.dispose()
+  })
+
   it('injects external-controller/secret/mixed-port into the active config before spawn (stripping profile values)', async () => {
     const opts = baseOpts()
     // Profile carried its own (conflicting) clash-api + mixed-port lines.
@@ -135,7 +156,11 @@ describe('createSupervisor — initial state', () => {
     // Non-conflicting profile content survives.
     expect(written).toContain('proxies: []')
     // mixed-port is only written when mixedPort is provided.
-    expect(written.match(/^external-controller:/gm)).toHaveLength(1)
+    expect(
+      written
+        .split('\n')
+        .filter((line) => line.startsWith('external-controller:')),
+    ).toHaveLength(1)
     await sup.dispose()
   })
 
@@ -154,6 +179,46 @@ describe('createSupervisor — initial state', () => {
     const written = readFileSync(opts.activeConfigPath, 'utf8')
     expect(written).toContain('external-controller: 127.0.0.1:9090')
     expect(written).not.toContain('mixed-port:')
+    await sup.dispose()
+  })
+
+  it('removes only listener fields that collide with the managed mixed port (#2136)', async () => {
+    const opts = baseOpts()
+    writeFileSync(
+      opts.activeConfigPath,
+      [
+        'port: 7890',
+        'socks-port: 7891',
+        'redir-port: 7890 # same managed port',
+        'tproxy-port: 7892',
+        'listeners:',
+        '  - name: nested',
+        '    port: 7890',
+        'proxies: []',
+        '',
+      ].join('\n'),
+    )
+    const proc = new FakeProc()
+    const sup = createSupervisor(
+      { ...opts, mixedPort: 7890 },
+      {
+        spawn: (() => proc) as never,
+        fetch: (async () =>
+          new Response(JSON.stringify({ version: '1' }), {
+            status: 200,
+          })) as unknown as typeof fetch,
+      },
+    )
+
+    await sup.start()
+
+    const written = readFileSync(opts.activeConfigPath, 'utf8').split('\n')
+    expect(written).toContain('mixed-port: 7890')
+    expect(written).not.toContain('port: 7890')
+    expect(written).not.toContain('redir-port: 7890 # same managed port')
+    expect(written).toContain('socks-port: 7891')
+    expect(written).toContain('tproxy-port: 7892')
+    expect(written).toContain('    port: 7890')
     await sup.dispose()
   })
 
@@ -213,12 +278,20 @@ describe('createSupervisor — initial state', () => {
           status: 500,
         })) as unknown as typeof fetch,
     })
-    const startP = sup.start()
-    // Simulate the kernel crashing on startup.
-    setTimeout(() => proc.emitExit(1, null), 10)
-    const st = await startP
+    // Crash the process only once it has actually spawned (state carries a
+    // pid, so doStart has already wired its exit handler). A wall-clock
+    // setTimeout raced doStart's async config-inject: under load the exit fired
+    // before the listener was attached, was dropped, and the supervisor timed
+    // out reporting errored with NO exit code (flaky #242).
+    sup.on('state', (s) => {
+      if (s.status === 'starting' && s.pid !== undefined) {
+        queueMicrotask(() => proc.emitExit(1, null))
+      }
+    })
+    const st = await sup.start()
     expect(st.status).toBe('errored')
     expect(st.lastExitCode).toBe(1)
+    await sup.dispose()
   })
 })
 
@@ -433,6 +506,123 @@ describe('createSupervisor — stop / restart / tree-kill / mutex', () => {
     const r = await p
     expect(r.valid).toBe(false)
     expect(r.message).toContain('parse error')
+  })
+
+  it('gives sequential first-run GEO downloads a 300s validation window (#2118, #2121)', async () => {
+    const opts = baseOpts()
+    const proc = new FakeProc()
+    const setTimer = vi.fn(() => 1 as unknown as ReturnType<typeof setTimeout>)
+    const clearTimer = vi.fn()
+    const sup = createSupervisor(opts, {
+      spawn: (() => proc) as never,
+      fetch: ready200(),
+      setTimer,
+      clearTimer,
+    })
+
+    const result = sup.validate(opts.activeConfigPath)
+    expect(setTimer).toHaveBeenCalledWith(expect.any(Function), 300_000)
+    proc.emitExit(0, null)
+    await expect(result).resolves.toEqual({ valid: true, message: '' })
+    expect(clearTimer).toHaveBeenCalledOnce()
+  })
+
+  it('kills a timed-out validator and keeps its diagnostic output', async () => {
+    const opts = { ...baseOpts(), validateTimeoutMs: 25 }
+    const proc = new FakeProc()
+    const timers: Array<{ fn: () => void; ms: number }> = []
+    const sup = createSupervisor(opts, {
+      spawn: (() => proc) as never,
+      fetch: ready200(),
+      setTimer: ((fn: () => void, ms: number) => {
+        timers.push({ fn, ms })
+        return timers.length as unknown as ReturnType<typeof setTimeout>
+      }) as never,
+      clearTimer: vi.fn(),
+    })
+
+    const result = sup.validate(opts.activeConfigPath)
+    proc.stderr.emit(
+      'data',
+      Buffer.from("Can't find GeoIP.dat, start download"),
+    )
+    expect(timers[0]?.ms).toBe(25)
+    timers[0]?.fn()
+
+    // Timeout sends SIGKILL but does not release the caller while the validator
+    // may still own the candidate file or write GEO data in the shared homeDir.
+    let resolved = false
+    void result.then(() => {
+      resolved = true
+    })
+    await Promise.resolve()
+    expect(resolved).toBe(false)
+    expect(proc.killSignals).toEqual(['SIGKILL'])
+    expect(timers[1]?.ms).toBe(5_000)
+
+    proc.emitExit(null, 'SIGKILL')
+
+    const validation = await result
+    expect(validation.valid).toBe(false)
+    expect(validation.message).toContain('validate timeout after 25ms')
+    expect(validation.message).toContain('GeoIP.dat')
+  })
+
+  it('keeps the timeout verdict when kill emits exit synchronously', async () => {
+    const opts = { ...baseOpts(), validateTimeoutMs: 25 }
+    const proc = new FakeProc()
+    proc.kill = (signal?: string) => {
+      proc.killSignals.push(signal ?? 'SIGTERM')
+      proc.emitExit(0, signal ?? 'SIGTERM')
+      return true
+    }
+    let fireTimeout: (() => void) | undefined
+    const sup = createSupervisor(opts, {
+      spawn: (() => proc) as never,
+      fetch: ready200(),
+      setTimer: ((fn: () => void) => {
+        fireTimeout = fn
+        return 1 as unknown as ReturnType<typeof setTimeout>
+      }) as never,
+      clearTimer: vi.fn(),
+    })
+
+    const result = sup.validate(opts.activeConfigPath)
+    fireTimeout?.()
+
+    await expect(result).resolves.toMatchObject({
+      valid: false,
+      message: 'validate timeout after 25ms',
+    })
+  })
+
+  it('releases a timed-out validator after the kill grace if exit never arrives', async () => {
+    const opts = { ...baseOpts(), validateTimeoutMs: 25 }
+    const proc = new FakeProc()
+    proc.kill = (signal?: string) => {
+      proc.killSignals.push(signal ?? 'SIGTERM')
+      return true
+    }
+    const timers: Array<{ fn: () => void; ms: number }> = []
+    const sup = createSupervisor(opts, {
+      spawn: (() => proc) as never,
+      fetch: ready200(),
+      setTimer: ((fn: () => void, ms: number) => {
+        timers.push({ fn, ms })
+        return timers.length as unknown as ReturnType<typeof setTimeout>
+      }) as never,
+      clearTimer: vi.fn(),
+    })
+
+    const result = sup.validate(opts.activeConfigPath)
+    timers[0]?.fn()
+    expect(timers[1]?.ms).toBe(5_000)
+    timers[1]?.fn()
+
+    await expect(result).resolves.toMatchObject({
+      valid: false,
+      message: 'validate timeout after 25ms',
+    })
   })
 })
 

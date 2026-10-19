@@ -8,6 +8,25 @@ import { HelperVersionMismatchError } from './helper/client'
 import { createTunController } from './tun-controller'
 import { createTunTeardown } from './tun-teardown'
 
+/** Only retry a helper which has not opened its socket/pipe yet. */
+function isHelperUnavailable(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    'code' in err &&
+    (err.code === 'ENOENT' || err.code === 'ECONNREFUSED')
+  )
+}
+
+function canRepairHelper(err: unknown): boolean {
+  return (
+    isHelperUnavailable(err) ||
+    err instanceof HelperVersionMismatchError ||
+    // Earlier root helpers left a 0755 socket that desktop users could not
+    // connect to. Reinstall once to apply the current socket permissions.
+    (err instanceof Error && 'code' in err && err.code === 'EACCES')
+  )
+}
+
 /**
  * Stop the in-process supervisor (the unprivileged sidecar backend). Only
  * start/stop are exercised by the runtime — typed structurally so boot() can
@@ -183,51 +202,53 @@ export function createTunRuntime(opts: CreateTunRuntimeOptions): TunRuntime {
     return c
   }
 
-  async function startPrivileged(): Promise<void> {
-    // One-time privileged install if the service isn't registered yet (ONE
-    // elevation prompt, inside the injected installer). A PRE-EXISTING install,
-    // however, may be a stale helper left by an older build that speaks a
-    // different IPC protocol version — track that so we only pay for the
-    // version handshake when there's something stale to catch.
-    const preInstalled = await installer.isInstalled()
-    if (!preInstalled) {
-      await installer.install(installOptions())
-    }
-    let thisClient = connectTracked()
-    // Self-healing version handshake: a fresh install is THIS build's helper and
-    // matches by construction, but a pre-existing one might be stale. Probe it,
-    // and on a protocol-version mismatch reinstall (uninstall the stale service +
-    // install this build's) and reconnect. Only a HelperVersionMismatchError is
-    // recovered this way — any other getVersion failure (timeout / dropped socket
-    // / secret mismatch) propagates untouched. A SECOND mismatch after a clean
-    // reinstall is unrecoverable and surfaces.
-    if (preInstalled) {
+  async function connectReady(): Promise<HelperClient> {
+    // Service registration/start completes before Node has necessarily opened
+    // the socket (systemd Type=simple in particular). Keep the successful
+    // connection: disconnecting a probe also tears down the helper's kernel.
+    for (let attempt = 0; ; attempt++) {
+      const candidate = connectTracked()
       try {
-        await thisClient.getVersion()
+        await candidate.getVersion()
+        return candidate
       } catch (err) {
-        // Close the connected socket before bailing on EITHER failure exit so a
-        // transient handshake error (or an unrecoverable second mismatch) can't
-        // leak an open helper FD + its listeners — `client` is still unassigned,
-        // so stopKernel() could never reach it. close() never rejects.
-        if (!(err instanceof HelperVersionMismatchError)) {
-          await thisClient.close()
-          throw err
-        }
-        await thisClient.close()
-        await installer.uninstall()
-        await installer.install(installOptions())
-        thisClient = connectTracked()
-        try {
-          await thisClient.getVersion()
-        } catch (err2) {
-          await thisClient.close()
-          throw err2
-        }
+        await candidate.close()
+        if (!isHelperUnavailable(err) || attempt >= 20) throw err
+        await new Promise((resolve) => setTimeout(resolve, 250))
       }
     }
+  }
+
+  async function startPrivileged(): Promise<void> {
+    const preInstalled = await installer.isInstalled()
+    if (!preInstalled) await installer.install(installOptions())
+
+    let thisClient: HelperClient
+    try {
+      thisClient = await connectReady()
+    } catch (err) {
+      // Older installs can remain registered while pointing at a removed app
+      // or an incomplete helper bundle. Repair once using the current paths;
+      // registration alone must not permanently bypass installation (#2149).
+      if (!preInstalled || !canRepairHelper(err)) {
+        throw err
+      }
+      await installer.install(installOptions())
+      thisClient = await connectReady()
+    }
+
+    try {
+      const result = await thisClient.startKernel(kernelOptions())
+      if (!result.running) throw new Error('helper: kernel failed to start')
+    } catch (err) {
+      // A failed start may still have reached the helper. Await teardown while
+      // IPC is usable, then close even if it has already disconnected. Preserve
+      // the startup error so the controller can report it after recovery.
+      await thisClient.stopKernel().catch(() => {})
+      await thisClient.close()
+      throw err
+    }
     client = thisClient
-    // The privileged service spawns mihomo with the TUN privilege.
-    await client.startKernel(kernelOptions())
     backend = 'tun'
   }
 

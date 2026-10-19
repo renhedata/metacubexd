@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { parse } from 'yaml'
-import { createProfileStore } from './profiles'
+import { createProfileStore, SubscriptionFetchError } from './profiles'
 
 function tmpDir() {
   return mkdtempSync(join(tmpdir(), 'mcxd-profiles-'))
@@ -64,7 +64,7 @@ describe('createProfileStore — disk CRUD', () => {
   })
 
   it('read throws for a missing id', async () => {
-    await expect(store.read('nope')).rejects.toThrow(/not found/i)
+    await expect(store.read('nope')).rejects.toThrow('not found')
   })
 
   it('update changes name and/or content and bumps updatedAt', async () => {
@@ -84,7 +84,7 @@ describe('createProfileStore — disk CRUD', () => {
     await store.create({ name: 'home', content: 'a: 1\n' })
     await store.delete('id1')
     expect(await store.list()).toEqual([])
-    await expect(store.read('id1')).rejects.toThrow(/not found/i)
+    await expect(store.read('id1')).rejects.toThrow('not found')
   })
 
   it('duplicate copies content under a new id and a derived name', async () => {
@@ -161,7 +161,7 @@ describe('createProfileStore — import + active', () => {
     expect(meta.name).toBe('https://sub.example/clash')
   })
 
-  it('importFromUrl throws on non-200', async () => {
+  it('importFromUrl preserves a non-200 provider status without exposing its URL', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'mcxd-profiles-imp3-'))
     const fakeFetch = (async () =>
       new Response('nope', { status: 403 })) as unknown as typeof fetch
@@ -170,7 +170,33 @@ describe('createProfileStore — import + active', () => {
       activeConfigPath: join(dir, '..', 'active.yaml'),
       fetch: fakeFetch,
     })
-    await expect(store.importFromUrl('https://x')).rejects.toThrow(/403/)
+    const error = await store
+      .importFromUrl('https://x?token=secret')
+      .catch((reason: unknown) => reason)
+    expect(error).toBeInstanceOf(SubscriptionFetchError)
+    expect(error).toMatchObject({ upstreamStatus: 403 })
+    expect((error as Error).message).not.toContain('token=secret')
+  })
+
+  it('times out a stalled subscription fetch instead of hanging forever', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mcxd-profiles-timeout-'))
+    const fakeFetch = (async (_url: string, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal
+        signal?.addEventListener('abort', () => reject(signal.reason), {
+          once: true,
+        })
+      })) as unknown as typeof fetch
+    const store = createProfileStore({
+      dir,
+      activeConfigPath: join(dir, '..', 'active.yaml'),
+      fetch: fakeFetch,
+      subscriptionTimeoutMs: 10,
+    })
+
+    await expect(store.importFromUrl('https://x')).rejects.toThrow(
+      'subscription fetch timed out after 10ms',
+    )
   })
 
   it('getActiveId is undefined until setActive; setActive writes activeConfigPath', async () => {
@@ -236,6 +262,70 @@ describe('createProfileStore — merge profiles', () => {
     expect(meta.type).toBe('local')
   })
 
+  it('only applies scoped merge overlays to their owning base', async () => {
+    await store.create({ name: 'a', content: 'mode: rule\n' })
+    await store.create({ name: 'b', content: 'mode: direct\n' })
+    await store.create({
+      name: 'a overlay',
+      type: 'merge',
+      baseProfileId: 'id1',
+      managedBy: 'visual-editor',
+      content: 'log-level: debug\n',
+    })
+
+    expect((await store.compose('id1')).content).toContain('log-level: debug')
+    expect((await store.compose('id2')).content).not.toContain('log-level')
+  })
+
+  it('enforces one managed visual overlay per base', async () => {
+    await store.create({ name: 'a', content: 'mode: rule\n' })
+    await store.create({
+      name: 'managed',
+      type: 'merge',
+      baseProfileId: 'id1',
+      managedBy: 'visual-editor',
+    })
+    await expect(
+      store.create({
+        name: 'duplicate',
+        type: 'merge',
+        baseProfileId: 'id1',
+        managedBy: 'visual-editor',
+      }),
+    ).rejects.toThrow('already exists')
+  })
+
+  it('clears the base conflict marker when its managed overlay is deleted', async () => {
+    await store.create({
+      name: 'a',
+      content: 'mode: rule\n',
+      editorStatus: 'conflicted',
+    })
+    await store.create({
+      name: 'managed',
+      type: 'merge',
+      baseProfileId: 'id1',
+      managedBy: 'visual-editor',
+    })
+    await store.delete('id2')
+    expect(await store.list()).toEqual([
+      expect.objectContaining({ id: 'id1', editorStatus: 'clean' }),
+    ])
+  })
+
+  it('deleting a base also deletes its scoped managed overlays', async () => {
+    await store.create({ name: 'a', content: 'mode: rule\n' })
+    await store.create({
+      name: 'managed',
+      type: 'merge',
+      baseProfileId: 'id1',
+      managedBy: 'visual-editor',
+    })
+    await store.delete('id1')
+    expect(await store.list()).toEqual([])
+    await expect(store.read('id2')).rejects.toThrow('not found')
+  })
+
   it('update can toggle the enabled flag', async () => {
     await store.create({ name: 'overlay', content: 'a: 1\n', type: 'merge' })
     const updated = await store.update('id1', { enabled: false })
@@ -243,6 +333,49 @@ describe('createProfileStore — merge profiles', () => {
     expect((await store.list())[0]!.enabled).toBe(false)
     const reEnabled = await store.update('id1', { enabled: true })
     expect(reEnabled.enabled).toBe(true)
+  })
+
+  it('update persists the auto-update interval (0 disables, undefined untouched)', async () => {
+    await store.create({ name: 'sub', content: 'a: 1\n' })
+    const set = await store.update('id1', { updateInterval: 60 })
+    expect(set.updateInterval).toBe(60)
+    expect((await store.list())[0]!.updateInterval).toBe(60)
+    // 0 is meaningful (disables), not "clear/omit".
+    const disabled = await store.update('id1', { updateInterval: 0 })
+    expect(disabled.updateInterval).toBe(0)
+  })
+
+  it('setActive snapshots the previous active config to active.yaml.bak', async () => {
+    await store.create({ name: 'a', content: 'mode: rule\n' })
+    await store.create({ name: 'b', content: 'mode: global\n' })
+    await store.setActive('id1')
+    // First activation: no prior file existed (active.yaml absent), so no bak.
+    await store.setActive('id2')
+    // Second activation: previous active.yaml ('mode: rule') snapshotted aside.
+    expect(readFileSync(`${activeConfigPath}.bak`, 'utf8')).toContain(
+      'mode: rule',
+    )
+    expect(readFileSync(activeConfigPath, 'utf8')).toContain('mode: global')
+  })
+
+  it('rollback restores the last-known-good config and reports presence', async () => {
+    // No backup yet => false, active.yaml untouched.
+    expect(await store.rollback()).toBe(false)
+    await store.create({ name: 'good', content: 'mode: rule\n' })
+    await store.create({ name: 'bad', content: 'mode: global\n' })
+    await store.setActive('id1')
+    await store.setActive('id2') // writes good config aside as .bak
+    expect(await store.rollback()).toBe(true)
+    expect(readFileSync(activeConfigPath, 'utf8')).toContain('mode: rule')
+  })
+
+  it('resetActive wipes active.yaml to empty and clears the active id', async () => {
+    await store.create({ name: 'a', content: 'mode: rule\n' })
+    await store.setActive('id1')
+    expect(await store.getActiveId()).toBe('id1')
+    await store.resetActive()
+    expect(readFileSync(activeConfigPath, 'utf8')).toBe('')
+    expect(await store.getActiveId()).toBeUndefined()
   })
 
   it('setActive composes enabled merge overlays onto the base', async () => {
@@ -308,7 +441,7 @@ describe('createProfileStore — merge profiles', () => {
       content: 'mode: global\n',
       type: 'merge',
     })
-    await expect(store.setActive('id1')).rejects.toThrow(/merge/i)
+    await expect(store.setActive('id1')).rejects.toThrow('merge')
   })
 })
 
@@ -433,7 +566,7 @@ describe('createProfileStore — script profiles', () => {
       content: JSON.stringify({ key: 'mode', value: 'global' }),
       type: 'script',
     })
-    await expect(store.setActive('id1')).rejects.toThrow(/script/i)
+    await expect(store.setActive('id1')).rejects.toThrow('script')
   })
 })
 
@@ -527,7 +660,7 @@ describe('createProfileStore — refresh', () => {
       idGen: () => 'id1',
     })
     await store.create({ name: 'home', content: 'a: 1\n' })
-    await expect(store.refresh('id1')).rejects.toThrow(/remote|url/i)
+    await expect(store.refresh('id1')).rejects.toThrow('remote subscription')
   })
 
   it('refresh throws on non-200', async () => {
@@ -547,7 +680,7 @@ describe('createProfileStore — refresh', () => {
       idGen: () => 'id1',
     })
     await store.importFromUrl('https://sub.example/clash')
-    await expect(store.refresh('id1')).rejects.toThrow(/403/)
+    await expect(store.refresh('id1')).rejects.toThrow('403')
   })
 
   it('refresh throws for a missing id', async () => {
@@ -556,7 +689,7 @@ describe('createProfileStore — refresh', () => {
       dir,
       activeConfigPath: join(dir, '..', 'active.yaml'),
     })
-    await expect(store.refresh('nope')).rejects.toThrow(/not found/i)
+    await expect(store.refresh('nope')).rejects.toThrow('not found')
   })
 })
 

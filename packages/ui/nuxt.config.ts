@@ -33,13 +33,17 @@ export default defineNuxtConfig({
   },
 
   // Runtime config
-  // Public keys can be overridden at runtime via NUXT_PUBLIC_* env vars
-  // e.g. NUXT_PUBLIC_DEFAULT_BACKEND_URL=http://host:port
+  // Public keys can be overridden at runtime via NUXT_PUBLIC_* env vars.
+  // The standalone panel container maps DEFAULT_BACKEND_URL onto
+  // NUXT_PUBLIC_DEFAULT_BACKEND_URL in docker-entrypoint.sh so operators can
+  // pre-fill the connect form without rebuilding — see README ("Pre-fill the
+  // backend address"). The empty string here is only the build-time default.
   runtimeConfig: {
     public: {
       appVersion: pkg.version,
       mockMode: process.env.MOCK_MODE === 'true',
       defaultBackendURL: '',
+      githubToken: '',
     },
   },
 
@@ -205,7 +209,7 @@ export default defineNuxtConfig({
         // and log "Manifest: Line 1, column 1, Syntax error" in the console.
         ...(isDev || pwaDisabled
           ? []
-          : [{ rel: 'manifest', href: 'manifest.webmanifest' }]),
+          : [{ rel: 'manifest' as const, href: 'manifest.webmanifest' }]),
       ],
       script: [
         {
@@ -215,10 +219,11 @@ export default defineNuxtConfig({
           tagPosition: 'head',
           defer: false,
           async: false,
-          onerror: "window.__METACUBEXD_CONFIG__={defaultBackendURL:''}",
+          onerror:
+            "window.__METACUBEXD_CONFIG__={defaultBackendURL:'',githubToken:''}",
         },
         {
-          innerHTML: `window.__METACUBEXD_CONFIG__ = window.__METACUBEXD_CONFIG__ || { defaultBackendURL: '' }`,
+          innerHTML: `window.__METACUBEXD_CONFIG__ = window.__METACUBEXD_CONFIG__ || { defaultBackendURL: '', githubToken: '' }`,
         },
       ],
     },

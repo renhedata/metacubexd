@@ -105,7 +105,7 @@ export const useProxiesStore = defineStore('proxies', () => {
     )
 
     if (fallbackDefault) {
-      const defaultTestUrl = proxy.testUrl || configStore.urlForLatencyTest
+      const defaultTestUrl = configStore.resolveLatencyTestUrl(proxy.testUrl)
       const isDefaultTestUrlLatencyExists =
         defaultTestUrl in result.allTestUrlLatency
 
@@ -122,7 +122,7 @@ export const useProxiesStore = defineStore('proxies', () => {
   }
 
   const normalizeLatencyTestUrl = (testUrl: string | null) =>
-    testUrl || configStore.urlForLatencyTest
+    configStore.resolveLatencyTestUrl(testUrl)
 
   // First positive (successful) latency among a node's per-test-url readings.
   // NOT_CONNECTED (0) reads are treated as "no data" and skipped, so a node
@@ -138,19 +138,25 @@ export const useProxiesStore = defineStore('proxies', () => {
     return undefined
   }
 
-  // Non-empty latency series for the requested url, else any non-empty series
-  // the node recorded under another url — mirrors findPositiveLatency so the
-  // stability bar matches the pill.
+  const hasSuccessfulLatency = (history: Proxy['history'] | undefined) =>
+    history?.some(({ delay }) => delay > 0) ?? false
+
+  // Successful latency series for the requested url, else any successful
+  // series the node recorded under another url. A non-empty series can still
+  // contain only failed probes (delay 0); treating that as usable makes the
+  // stability bar stay gray while the pill falls back to a provider reading.
+  // If nothing succeeded anywhere, keep the requested failure history so the
+  // UI can still show those attempts.
   const pickLatencyHistory = (
     histories: Record<string, Proxy['history'] | undefined>,
     finalTestUrl: string,
   ) => {
     const exact = histories[finalTestUrl]
-    if (exact?.length) return exact
+    if (hasSuccessfulLatency(exact)) return exact
     for (const series of Object.values(histories)) {
-      if (series?.length) return series
+      if (hasSuccessfulLatency(series)) return series
     }
-    return undefined
+    return exact?.length ? exact : undefined
   }
 
   const replaceNodeLatency = (
@@ -420,7 +426,7 @@ export const useProxiesStore = defineStore('proxies', () => {
 
   // Get latency by name
   const getLatencyByName = (name: string, testUrl: string | null) => {
-    const finalTestUrl = testUrl || configStore.urlForLatencyTest
+    const finalTestUrl = configStore.resolveLatencyTestUrl(testUrl)
     const latencyMapValue = latencyMap.value
     const nowName = getNowProxyNodeName(name)
 
@@ -448,7 +454,7 @@ export const useProxiesStore = defineStore('proxies', () => {
 
   // Get latency history by name
   const getLatencyHistoryByName = (name: string, testUrl: string | null) => {
-    const finalTestUrl = testUrl || configStore.urlForLatencyTest
+    const finalTestUrl = configStore.resolveLatencyTestUrl(testUrl)
     const nowProxyNodeName = getNowProxyNodeName(name)
     const nowHistories =
       proxyNodeMap.value[nowProxyNodeName]?.latencyTestHistory || {}
@@ -581,8 +587,9 @@ export const useProxiesStore = defineStore('proxies', () => {
     const currentProxyGroup = proxies.value.find(
       (item) => item.name === proxyGroupName,
     )
-    const finalTestUrl =
-      currentProxyGroup?.testUrl || configStore.urlForLatencyTest
+    const finalTestUrl = configStore.resolveLatencyTestUrl(
+      currentProxyGroup?.testUrl,
+    )
     const memberNames = currentProxyGroup?.all ?? [proxyGroupName]
 
     try {
@@ -655,7 +662,7 @@ export const useProxiesStore = defineStore('proxies', () => {
     const provider = proxyProviders.value.find(
       (item) => item.name === providerName,
     )
-    const finalTestUrl = provider?.testUrl || configStore.urlForLatencyTest
+    const finalTestUrl = configStore.resolveLatencyTestUrl(provider?.testUrl)
     const timeout = provider?.timeout ?? configStore.latencyTestTimeoutDuration
     const memberNames = provider?.proxies.map((proxy) => proxy.name) ?? []
     const results: Record<string, number> = {}

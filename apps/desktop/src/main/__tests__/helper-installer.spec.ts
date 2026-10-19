@@ -1,372 +1,308 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { createHelperInstaller } from '../helper/installer'
-
-interface ExecResult {
-  stdout: string
-  stderr: string
-}
-
-/**
- * A scripted mock for the injected `exec` (un-elevated queries) and `elevate`
- * (the ONE privileged script per install/uninstall). Both record every command
- * string issued and default to empty stdout, so NO test ever shells out to the
- * real OS, installs a service, or triggers an elevation prompt.
- */
-function makeRunners(responses: string[] = []) {
-  const execCalls: string[] = []
-  const elevateCalls: string[] = []
-  const queue = [...responses]
-  const exec = vi.fn(async (cmd: string): Promise<ExecResult> => {
-    execCalls.push(cmd)
-    return { stdout: queue.shift() ?? '', stderr: '' }
-  })
-  const elevate = vi.fn(async (script: string): Promise<ExecResult> => {
-    elevateCalls.push(script)
-    return { stdout: queue.shift() ?? '', stderr: '' }
-  })
-  return { exec, elevate, execCalls, elevateCalls }
-}
+import { execFileSync } from 'node:child_process'
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { describe, expect, it, vi } from 'vitest'
+import {
+  createHelperInstaller,
+  windowsServiceSource,
+} from '../helper/installer'
 
 const PATHS = {
   label: 'io.github.metacubexd.helper',
   serviceName: 'metacubexd-helper',
   secretPath: '/etc/metacubexd/helper.secret',
 }
-
-const INSTALL_OPTS = {
-  electronBin: '/Applications/metacubexd.app/Contents/MacOS/metacubexd',
+const INSTALL = {
+  electronBin: '/opt/Meta CubeXD/metacubexd',
   helperEntry:
-    '/Applications/metacubexd.app/Contents/Resources/helper/index.js',
-  socketPath: '/var/run/metacubexd-helper.sock',
+    '/opt/Meta CubeXD/resources/app.asar.unpacked/out/helper/index.js',
+  socketPath: '/run/metacubexd-helper.sock',
   secret: 'shared-install-secret',
 }
+const WINDOWS_PATHS = {
+  ...PATHS,
+  secretPath: 'C:\\ProgramData\\metacubexd-helper\\helper.secret',
+}
+const WINDOWS_INSTALL = {
+  ...INSTALL,
+  electronBin: "C:\\Users\\O'Brien 中文\\Meta CubeXD\\metacubexd.exe",
+  helperEntry:
+    "C:\\Users\\O'Brien 中文\\Meta CubeXD\\resources\\out\\helper\\index.js",
+  socketPath: '\\\\.\\pipe\\metacubexd-helper',
+}
 
-describe('createHelperInstaller', () => {
-  beforeEach(() => {
-    vi.restoreAllMocks()
+function setup(platform: NodeJS.Platform, response: string | Error = '') {
+  const exec = vi.fn(async () => {
+    if (response instanceof Error) throw response
+    return { stdout: response, stderr: '' }
+  })
+  const elevate = vi.fn(async (_script: string) => ({ stdout: '', stderr: '' }))
+  const installer = createHelperInstaller({
+    platform,
+    exec,
+    elevate,
+    paths: platform === 'win32' ? WINDOWS_PATHS : PATHS,
+  })
+  return { exec, elevate, installer }
+}
+
+function commandError(code: number): Error {
+  return Object.assign(new Error(`command exited ${code}`), { code })
+}
+
+function scriptFrom(elevate: ReturnType<typeof setup>['elevate']): string {
+  return elevate.mock.calls[0]?.[0] ?? ''
+}
+
+describe('helper installer', () => {
+  it.each(['darwin', 'linux', 'win32'] as const)(
+    'installs %s through one elevation and no unprivileged command',
+    async (platform) => {
+      const { installer, exec, elevate } = setup(platform)
+      await installer.install(platform === 'win32' ? WINDOWS_INSTALL : INSTALL)
+      expect(elevate).toHaveBeenCalledTimes(1)
+      expect(exec).not.toHaveBeenCalled()
+    },
+  )
+
+  it('quotes Linux service arguments, escapes systemd expansion, and restarts existing services', async () => {
+    const { installer, elevate } = setup('linux')
+    await installer.install({
+      ...INSTALL,
+      electronBin: '/opt/100% $HOME/Meta CubeXD',
+    })
+    const script = scriptFrom(elevate)
+    expect(script.startsWith('set -eu\n')).toBe(true)
+    expect(script).toContain(
+      `ExecStart="/opt/100%% $HOME/Meta CubeXD" "${INSTALL.helperEntry}"`,
+    )
+    expect(script).toContain(
+      'Environment="MCXD_HELPER_SOCKET=/run/metacubexd-helper.sock"',
+    )
+    expect(script).toContain(
+      'Environment="MCXD_HELPER_SECRET_FILE=/etc/metacubexd/helper.secret"',
+    )
+    expect(script).not.toContain('Environment=MCXD_HELPER_SECRET=')
+    expect(script).toContain(
+      "(umask 077; printf '%s' 'shared-install-secret' > '/etc/metacubexd/helper.secret')",
+    )
+    expect(script).toContain("chmod 0600 '/etc/metacubexd/helper.secret'")
+    expect(script).toContain(
+      "systemctl enable 'metacubexd-helper'\nsystemctl restart 'metacubexd-helper'",
+    )
+    if (process.platform !== 'win32')
+      execFileSync('/bin/sh', ['-n'], { input: script })
   })
 
-  describe('unknown platform', () => {
-    it('throws on install/uninstall/isInstalled for an unsupported platform', async () => {
-      const { exec, elevate } = makeRunners()
-      const installer = createHelperInstaller({
-        // 'aix' is a valid NodeJS.Platform but has no helper-install support.
-        platform: 'aix',
-        exec,
-        elevate,
-        paths: PATHS,
-      })
-
-      await expect(installer.install(INSTALL_OPTS)).rejects.toThrow(
-        /unsupported platform/i,
-      )
-      await expect(installer.uninstall()).rejects.toThrow(
-        /unsupported platform/i,
-      )
-      await expect(installer.isInstalled()).rejects.toThrow(
-        /unsupported platform/i,
-      )
+  it('quotes the macOS secret directory and reloads the daemon during repair', async () => {
+    const { exec, elevate } = setup('darwin')
+    const secretPath = '/Library/Application Support/metacubexd/helper.secret'
+    await createHelperInstaller({
+      platform: 'darwin',
+      exec,
+      elevate,
+      paths: { ...PATHS, secretPath },
+    }).install({
+      ...INSTALL,
+      electronBin: '/Applications/A & B.app/Contents/MacOS/metacubexd',
     })
+    const script = scriptFrom(elevate)
+    expect(script).toContain(
+      "mkdir -p -- '/Library/Application Support/metacubexd'",
+    )
+    expect(script).toContain(`> '${secretPath}')`)
+    expect(script).toContain(
+      '/Applications/A &amp; B.app/Contents/MacOS/metacubexd',
+    )
+    expect(script).toContain(
+      'launchctl bootout system/io.github.metacubexd.helper',
+    )
+    expect(script).toContain(
+      "launchctl bootstrap system '/Library/LaunchDaemons/io.github.metacubexd.helper.plist'",
+    )
+    expect(script).not.toContain('<key>MCXD_HELPER_SECRET</key>')
+    if (process.platform !== 'win32')
+      execFileSync('/bin/sh', ['-n'], { input: script })
   })
 
-  describe('macOS (darwin)', () => {
-    function darwinInstaller(responses: string[] = []) {
-      const runners = makeRunners(responses)
-      const installer = createHelperInstaller({
-        platform: 'darwin',
-        exec: runners.exec,
-        elevate: runners.elevate,
-        paths: PATHS,
-      })
-      return { installer, ...runners }
-    }
+  it('builds a real Windows SCM host, keeps secrets out of it, and repairs the old service', async () => {
+    const { installer, elevate } = setup('win32')
+    await installer.install(WINDOWS_INSTALL)
+    const script = scriptFrom(elevate)
+    const source = windowsServiceSource(
+      PATHS.serviceName,
+      WINDOWS_INSTALL,
+      WINDOWS_PATHS.secretPath,
+    )
+    expect(source).toContain('ServiceBase.Run(new HelperService())')
+    expect(source).toContain('protected override void OnStart')
+    expect(source).toContain('protected override void OnStop')
+    expect(source).toContain(
+      `start.Arguments = "\\\"" + @"${WINDOWS_INSTALL.helperEntry}" + "\\\"";`,
+    )
+    expect(source).toContain(
+      'start.EnvironmentVariables["ELECTRON_RUN_AS_NODE"] = "1"',
+    )
+    expect(source).toContain(WINDOWS_PATHS.secretPath)
+    expect(source).not.toContain(WINDOWS_INSTALL.secret)
+    expect(script).toContain("$ErrorActionPreference = 'Stop'")
+    expect(script).toContain('Set-Acl -LiteralPath $serviceDir -AclObject $acl')
+    expect(script.indexOf('Set-Acl')).toBeLessThan(
+      script.indexOf('[IO.File]::WriteAllText'),
+    )
+    expect(script).toContain("@('S-1-5-18', 'S-1-5-32-544')")
+    expect(script).toContain('csc.exe')
+    expect(script).toContain('if ($LASTEXITCODE -ne 0)')
+    expect(script).toContain('Stop-Service -InputObject $existing -Force')
+    expect(script).toContain("$existing.WaitForStatus('Stopped'")
+    expect(script).toContain(
+      'Invoke-CimMethod -InputObject $service -MethodName Change',
+    )
+    expect(script).toContain(
+      'New-Service -Name $serviceName -BinaryPathName $binaryPath',
+    )
+    expect(script).toContain("$binaryPath = '\"' + $serviceExe + '\"'")
+    expect(script).toContain('Start-Service -Name $serviceName')
+    expect(script).not.toContain('sc create')
+  })
 
-    it('install() runs the whole write+register through ONE elevate call', async () => {
-      const { installer, elevateCalls, execCalls } = darwinInstaller()
-      await installer.install(INSTALL_OPTS)
-
-      // Everything privileged goes through exactly one elevation prompt.
-      expect(elevateCalls).toHaveLength(1)
-      // No un-elevated side effects during install.
-      expect(execCalls).toHaveLength(0)
-    })
-
-    it('install() embeds a LaunchDaemon plist at the canonical path with the env + run command', async () => {
-      const { installer, elevateCalls } = darwinInstaller()
-      await installer.install(INSTALL_OPTS)
-
-      const script = elevateCalls[0] ?? ''
-      // Written to the canonical LaunchDaemons location, keyed by the label.
-      expect(script).toContain(
-        '/Library/LaunchDaemons/io.github.metacubexd.helper.plist',
-      )
-      // The plist body: label + the electron-as-node ProgramArguments.
-      expect(script).toContain('<key>Label</key>')
-      expect(script).toContain('<string>io.github.metacubexd.helper</string>')
-      expect(script).toContain('<key>ProgramArguments</key>')
-      expect(script).toContain(`<string>${INSTALL_OPTS.electronBin}</string>`)
-      expect(script).toContain(`<string>${INSTALL_OPTS.helperEntry}</string>`)
-      // Env: run electron as node + pass the socket + the secret-FILE PATH to
-      // the helper. The plist must NOT embed the raw secret value (it would be
-      // readable by other local users); only the path to the 0600 file.
-      expect(script).toContain('<key>ELECTRON_RUN_AS_NODE</key>')
-      expect(script).toContain('<key>MCXD_HELPER_SOCKET</key>')
-      expect(script).toContain(`<string>${INSTALL_OPTS.socketPath}</string>`)
-      expect(script).toContain('<key>MCXD_HELPER_SECRET_FILE</key>')
-      expect(script).toContain(`<string>${PATHS.secretPath}</string>`)
-      expect(script).not.toContain('<key>MCXD_HELPER_SECRET</key>')
-      // Keep it alive as root.
-      expect(script).toContain('<key>KeepAlive</key>')
-      expect(script).toContain('<key>RunAtLoad</key>')
-    })
-
-    it('install() writes a root-owned 0600 (root-only) secret file then bootstraps the daemon', async () => {
-      const { installer, elevateCalls } = darwinInstaller()
-      await installer.install(INSTALL_OPTS)
-
-      const script = elevateCalls[0] ?? ''
-      // Secret written to the configured root-owned path with the secret value.
-      expect(script).toContain(PATHS.secretPath)
-      expect(script).toContain(INSTALL_OPTS.secret)
-      // Written under umask 077 so it is 0600 from the first byte (never briefly
-      // world-readable between the write and the chmod).
-      expect(script).toMatch(/umask\s+0?77;[^\n]*printf[^\n]*helper\.secret/)
-      // root-owned + 0600 (root-only): no other local user can read the secret.
-      expect(script).toMatch(/chown\s+root[: ]/)
-      expect(script).toMatch(
-        /chmod\s+0?600\s+\/etc\/metacubexd\/helper\.secret/,
-      )
-      // Register the daemon with launchctl bootstrap system.
-      expect(script).toContain(
-        'launchctl bootstrap system /Library/LaunchDaemons/io.github.metacubexd.helper.plist',
-      )
-    })
-
-    it('uninstall() bootouts the daemon then removes the plist + secret, through ONE elevate', async () => {
-      const { installer, elevateCalls, execCalls } = darwinInstaller()
+  it.each(['darwin', 'linux', 'win32'] as const)(
+    'uninstalls %s in one elevation',
+    async (platform) => {
+      const { installer, elevate } = setup(platform)
       await installer.uninstall()
+      expect(elevate).toHaveBeenCalledTimes(1)
+      const script = scriptFrom(elevate)
+      expect(script).toContain('helper.secret')
+      if (platform === 'win32') {
+        expect(script).toContain('Stop-Service')
+        expect(script).toContain('delete $serviceName')
+        expect(script).toContain('helper-service.exe')
+      } else if (process.platform !== 'win32') {
+        execFileSync('/bin/sh', ['-n'], { input: script })
+      }
+    },
+  )
 
-      expect(elevateCalls).toHaveLength(1)
-      expect(execCalls).toHaveLength(0)
-      const script = elevateCalls[0] ?? ''
-      expect(script).toContain(
-        'launchctl bootout system /Library/LaunchDaemons/io.github.metacubexd.helper.plist',
-      )
-      expect(script).toContain(
-        'rm -f /Library/LaunchDaemons/io.github.metacubexd.helper.plist',
-      )
-      expect(script).toContain(`rm -f ${PATHS.secretPath}`)
-    })
+  it.each([
+    ['darwin', 113],
+    ['linux', 1],
+    ['linux', 4],
+    ['win32', 1060],
+  ] as const)(
+    'treats expected missing/disabled %s exit %d as not installed',
+    async (platform, code) => {
+      expect(
+        await setup(platform, commandError(code)).installer.isInstalled(),
+      ).toBe(false)
+    },
+  )
 
-    it('isInstalled() reports true when the LaunchDaemon plist exists (un-elevated check)', async () => {
-      // launchctl print of the system domain lists the label when loaded.
-      const { installer, execCalls, elevateCalls } = darwinInstaller([
-        'io.github.metacubexd.helper => ...',
-      ])
-      const installed = await installer.isInstalled()
-      expect(installed).toBe(true)
-      // The probe is un-elevated and never prompts.
-      expect(elevateCalls).toHaveLength(0)
-      expect(execCalls).toHaveLength(1)
-    })
-
-    it('isInstalled() reports false when the daemon is absent', async () => {
-      const { installer } = darwinInstaller([''])
-      expect(await installer.isInstalled()).toBe(false)
-    })
+  it.each([
+    ['darwin', 'io.github.metacubexd.helper => ...'],
+    ['linux', 'enabled\n'],
+    ['win32', 'SERVICE_NAME: metacubexd-helper'],
+  ] as const)('probes %s without elevation', async (platform, stdout) => {
+    const { installer, elevate } = setup(platform, stdout)
+    expect(await installer.isInstalled()).toBe(true)
+    expect(elevate).not.toHaveBeenCalled()
   })
 
-  describe('linux (systemd)', () => {
-    function linuxInstaller(responses: string[] = []) {
-      const runners = makeRunners(responses)
-      const installer = createHelperInstaller({
+  it('does not hide unexpected installer errors', async () => {
+    for (const platform of ['darwin', 'linux', 'win32'] as const) {
+      const error = commandError(5)
+      await expect(setup(platform, error).installer.isInstalled()).rejects.toBe(
+        error,
+      )
+      const { installer, elevate } = setup(platform)
+      elevate.mockRejectedValueOnce(error)
+      await expect(installer.install(INSTALL)).rejects.toBe(error)
+    }
+  })
+
+  it('rejects unsupported platforms and supports the optional version probe', async () => {
+    const { installer, exec, elevate } = setup('aix')
+    await expect(installer.install(INSTALL)).rejects.toThrow(
+      'unsupported platform',
+    )
+    await expect(installer.uninstall()).rejects.toThrow('unsupported platform')
+    await expect(installer.isInstalled()).rejects.toThrow(
+      'unsupported platform',
+    )
+    expect(await installer.installedVersion()).toBeUndefined()
+    const getVersion = vi.fn(async () => '1')
+    expect(
+      await createHelperInstaller({
         platform: 'linux',
-        exec: runners.exec,
-        elevate: runners.elevate,
-        paths: PATHS,
-      })
-      return { installer, ...runners }
-    }
-
-    it('install() runs the whole write+register through ONE elevate (pkexec) call', async () => {
-      const { installer, elevateCalls, execCalls } = linuxInstaller()
-      await installer.install(INSTALL_OPTS)
-      expect(elevateCalls).toHaveLength(1)
-      expect(execCalls).toHaveLength(0)
-    })
-
-    it('install() embeds a systemd unit at the canonical path with ExecStart + env', async () => {
-      const { installer, elevateCalls } = linuxInstaller()
-      await installer.install(INSTALL_OPTS)
-
-      const script = elevateCalls[0] ?? ''
-      expect(script).toContain('/etc/systemd/system/metacubexd-helper.service')
-      expect(script).toContain('[Unit]')
-      expect(script).toContain('[Service]')
-      expect(script).toContain('[Install]')
-      // ExecStart runs electron-as-node against the helper entry.
-      expect(script).toContain(
-        `ExecStart=${INSTALL_OPTS.electronBin} ${INSTALL_OPTS.helperEntry}`,
-      )
-      // Env passed via systemd Environment= directives — the secret-FILE PATH,
-      // never the raw secret (the unit file is world-readable).
-      expect(script).toContain('Environment=ELECTRON_RUN_AS_NODE=1')
-      expect(script).toContain(
-        `Environment=MCXD_HELPER_SOCKET=${INSTALL_OPTS.socketPath}`,
-      )
-      expect(script).toContain(
-        `Environment=MCXD_HELPER_SECRET_FILE=${PATHS.secretPath}`,
-      )
-      expect(script).not.toContain(
-        `Environment=MCXD_HELPER_SECRET=${INSTALL_OPTS.secret}`,
-      )
-      // Runs as root.
-      expect(script).toContain('User=root')
-    })
-
-    it('install() writes the secret root-owned + app-readable then reloads/enables the unit', async () => {
-      const { installer, elevateCalls } = linuxInstaller()
-      await installer.install(INSTALL_OPTS)
-
-      const script = elevateCalls[0] ?? ''
-      expect(script).toContain(PATHS.secretPath)
-      expect(script).toContain(INSTALL_OPTS.secret)
-      // umask 077 so the secret file is 0600 from the first byte (no brief
-      // world-readable window before the chmod).
-      expect(script).toMatch(/umask\s+0?77;[^\n]*printf[^\n]*helper\.secret/)
-      expect(script).toMatch(/chown\s+root[: ]/)
-      expect(script).toMatch(
-        /chmod\s+0?600\s+\/etc\/metacubexd\/helper\.secret/,
-      )
-      expect(script).toContain('systemctl daemon-reload')
-      expect(script).toContain('systemctl enable --now metacubexd-helper')
-    })
-
-    it('uninstall() disables + removes the unit + secret through ONE elevate', async () => {
-      const { installer, elevateCalls } = linuxInstaller()
-      await installer.uninstall()
-
-      const script = elevateCalls[0] ?? ''
-      expect(script).toContain('systemctl disable --now metacubexd-helper')
-      expect(script).toContain(
-        'rm -f /etc/systemd/system/metacubexd-helper.service',
-      )
-      expect(script).toContain('systemctl daemon-reload')
-      expect(script).toContain(`rm -f ${PATHS.secretPath}`)
-    })
-
-    it('isInstalled() reports true/false from systemctl is-enabled', async () => {
-      const present = linuxInstaller(['enabled\n'])
-      expect(await present.installer.isInstalled()).toBe(true)
-      expect(present.elevateCalls).toHaveLength(0)
-      expect(present.execCalls[0]).toContain(
-        'systemctl is-enabled metacubexd-helper',
-      )
-
-      const absent = linuxInstaller([''])
-      expect(await absent.installer.isInstalled()).toBe(false)
-    })
-  })
-
-  describe('windows (win32)', () => {
-    function winInstaller(responses: string[] = []) {
-      const runners = makeRunners(responses)
-      const installer = createHelperInstaller({
-        platform: 'win32',
-        exec: runners.exec,
-        elevate: runners.elevate,
-        paths: PATHS,
-      })
-      return { installer, ...runners }
-    }
-
-    it('install() creates an auto-start service via sc through ONE elevate (UAC) call', async () => {
-      const { installer, elevateCalls, execCalls } = winInstaller()
-      await installer.install(INSTALL_OPTS)
-
-      expect(elevateCalls).toHaveLength(1)
-      expect(execCalls).toHaveLength(0)
-
-      const script = elevateCalls[0] ?? ''
-      // sc create with the electron-as-node binPath + auto start.
-      expect(script).toContain(
-        `sc create metacubexd-helper binPath= "${INSTALL_OPTS.electronBin} ${INSTALL_OPTS.helperEntry}" start= auto`,
-      )
-      expect(script).toContain('sc start metacubexd-helper')
-    })
-
-    it('install() delivers env via the per-service registry key + writes an ACL-locked secret file', async () => {
-      const { installer, elevateCalls } = winInstaller()
-      await installer.install(INSTALL_OPTS)
-
-      const script = elevateCalls[0] ?? ''
-      // Per-service registry env (NOT machine-wide setx, which leaked to every
-      // user and set the wrong var name). Carries the secret-FILE path, never
-      // the secret value.
-      expect(script).toContain(
-        'reg add "HKLM\\SYSTEM\\CurrentControlSet\\Services\\metacubexd-helper" /v Environment /t REG_MULTI_SZ',
-      )
-      expect(script).toContain('ELECTRON_RUN_AS_NODE=1')
-      expect(script).toContain(`MCXD_HELPER_SOCKET=${INSTALL_OPTS.socketPath}`)
-      expect(script).toContain(`MCXD_HELPER_SECRET_FILE=${PATHS.secretPath}`)
-      // No machine-wide secret leak; the registry env never holds the value.
-      expect(script).not.toContain('setx /M')
-      expect(script).not.toContain(`MCXD_HELPER_SECRET=${INSTALL_OPTS.secret}`)
-      // Secret written to the configured path, then locked to SYSTEM + admins.
-      expect(script).toContain(PATHS.secretPath)
-      expect(script).toContain(INSTALL_OPTS.secret)
-      expect(script).toContain(`icacls "${PATHS.secretPath}" /inheritance:r`)
-    })
-
-    it('uninstall() stops + deletes the service through ONE elevate', async () => {
-      const { installer, elevateCalls } = winInstaller()
-      await installer.uninstall()
-
-      const script = elevateCalls[0] ?? ''
-      expect(script).toContain('sc stop metacubexd-helper')
-      expect(script).toContain('sc delete metacubexd-helper')
-    })
-
-    it('isInstalled() reports true/false from sc query', async () => {
-      const present = winInstaller([
-        'SERVICE_NAME: metacubexd-helper\n  STATE : 4  RUNNING',
-      ])
-      expect(await present.installer.isInstalled()).toBe(true)
-      expect(present.elevateCalls).toHaveLength(0)
-      expect(present.execCalls[0]).toContain('sc query metacubexd-helper')
-
-      const absent = winInstaller([
-        '[SC] EnumQueryServicesStatus:OpenService FAILED 1060',
-      ])
-      expect(await absent.installer.isInstalled()).toBe(false)
-    })
-  })
-
-  describe('installedVersion()', () => {
-    it('returns the version reported by the injected helper version probe', async () => {
-      const { exec, elevate } = makeRunners()
-      const getVersion = vi.fn(async () => '1')
-      const installer = createHelperInstaller({
-        platform: 'darwin',
         exec,
         elevate,
         paths: PATHS,
         getVersion,
-      })
-
-      expect(await installer.installedVersion()).toBe('1')
-      expect(getVersion).toHaveBeenCalledTimes(1)
-    })
-
-    it('returns undefined when no version probe is injected', async () => {
-      const { exec, elevate } = makeRunners()
-      const installer = createHelperInstaller({
-        platform: 'linux',
-        exec,
-        elevate,
-        paths: PATHS,
-      })
-      expect(await installer.installedVersion()).toBeUndefined()
-    })
+      }).installedVersion(),
+    ).toBe('1')
   })
+
+  // Real Windows compiler + PowerShell parser, without elevation, SCM writes,
+  // or helper execution. Other platforms explicitly skip this platform check.
+  it.skipIf(process.platform !== 'win32')(
+    'compiles the service host and parses both generated PowerShell scripts on Windows',
+    async () => {
+      const root = process.env.SystemRoot || process.env.WINDIR || 'C:\\Windows'
+      const compiler = ['Framework64', 'Framework']
+        .map((framework) =>
+          join(root, 'Microsoft.NET', framework, 'v4.0.30319', 'csc.exe'),
+        )
+        .find((path) => existsSync(path))
+      expect(compiler, '.NET Framework compiler').toBeDefined()
+      const temp = mkdtempSync(join(tmpdir(), "mcxd O'Brien 中文 "))
+      try {
+        const source = join(temp, 'helper.cs')
+        const binary = join(temp, 'helper.exe')
+        writeFileSync(
+          source,
+          `\uFEFF${windowsServiceSource(
+            PATHS.serviceName,
+            WINDOWS_INSTALL,
+            WINDOWS_PATHS.secretPath,
+          )}`,
+        )
+        execFileSync(compiler!, [
+          '/nologo',
+          '/target:winexe',
+          `/reference:${join(dirname(compiler!), 'System.ServiceProcess.dll')}`,
+          `/out:${binary}`,
+          source,
+        ])
+        expect(readFileSync(binary).subarray(0, 2).toString()).toBe('MZ')
+        const { installer, elevate } = setup('win32')
+        await installer.install(WINDOWS_INSTALL)
+        await installer.uninstall()
+        for (const [index, [script]] of elevate.mock.calls.entries()) {
+          const file = join(temp, `script-${index}.ps1`)
+          writeFileSync(file, `\uFEFF${script}`)
+          const parse = `$errors = $null; $tokens = $null; [void][Management.Automation.Language.Parser]::ParseFile('${file.replaceAll("'", "''")}', [ref]$tokens, [ref]$errors); if ($errors.Count) { throw ($errors | Out-String) }`
+          execFileSync(
+            join(
+              root,
+              'System32',
+              'WindowsPowerShell',
+              'v1.0',
+              'powershell.exe',
+            ),
+            ['-NoProfile', '-NonInteractive', '-Command', parse],
+          )
+        }
+      } finally {
+        rmSync(temp, { recursive: true, force: true })
+      }
+    },
+    30000,
+  )
 })

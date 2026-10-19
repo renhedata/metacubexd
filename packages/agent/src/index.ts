@@ -1,3 +1,4 @@
+import type { ScriptRunner } from './script'
 import type { CreateSupervisorOptions } from './supervisor'
 import type {
   KernelManager,
@@ -6,8 +7,11 @@ import type {
 } from './types'
 import { createControlRouter } from './http'
 import { MIHOMO_VERSION } from './kernel/assets'
+import { createProfileConfigEditor } from './profile-editor'
 import { createProfileStore } from './profiles'
+import { applyActiveRefresh } from './refresh-apply'
 import { createProfileScheduler } from './scheduler'
+import { createScriptRunner } from './script'
 import { createSupervisor } from './supervisor'
 
 export const AGENT_VERSION = '0.0.0'
@@ -18,7 +22,20 @@ export { MIHOMO_VERSION, mihomoAsset } from './kernel/assets'
 export { fetchKernel, listMihomoVersions } from './kernel/fetch-kernel'
 export { fetchGeoAssets, GEO_ASSET_URLS } from './kernel/geo'
 export { mergeConfigs } from './merge'
+export {
+  createProfileConfigEditor,
+  ProfileEditorConflictError,
+  ProfileEditorValidationError,
+} from './profile-editor'
+export type {
+  ProfileConfigEditor,
+  ProfileConfigEditorOptions,
+  ProfileEditorApplyResult,
+  ProfileEditorPreview,
+  ProfileEditorSnapshot,
+} from './profile-editor'
 export { createProfileStore } from './profiles'
+export { applyActiveRefresh } from './refresh-apply'
 export { createProfileScheduler } from './scheduler'
 export type {
   ProfileRefreshResult,
@@ -41,6 +58,9 @@ export type { WebdavClient, WebdavClientOptions } from './webdav'
 export type CreateAgentOptions = CreateSupervisorOptions & {
   profilesDir: string
   agentToken?: string
+  // Runs enabled 'script' profiles during composition. Defaults to a real
+  // worker-backed runner; tests inject a fake to avoid spawning workers.
+  scriptRunner?: ScriptRunner
   systemProxy?: SystemProxyController // OS proxy controller; enables 'system-proxy'
   kernelManager?: KernelManager // kernel version mgmt; enables 'kernel-version'
   tunController?: TunController // TUN mode controller; enables 'tun'
@@ -58,8 +78,17 @@ export function createAgent(opts: CreateAgentOptions) {
   const profiles = createProfileStore({
     dir: opts.profilesDir,
     activeConfigPath: opts.activeConfigPath,
+    // Without a runner, script profiles are silently skipped during compose —
+    // the user's script transforms never apply. Default to a real one so the
+    // feature works across every Runtime Form (server/desktop) out of the box.
+    scriptRunner: opts.scriptRunner ?? createScriptRunner(),
   })
   const supervisor = createSupervisor(opts)
+  const profileEditor = createProfileConfigEditor({
+    profiles,
+    supervisor,
+    homeDir: opts.homeDir,
+  })
   const { systemProxy, kernelManager, tunController } = opts
   const info = (): AgentInfo => ({
     hasAgent: true,
@@ -86,6 +115,7 @@ export function createAgent(opts: CreateAgentOptions) {
       'runtime-config',
       // Config-section editor reads/writes top-level keys of the active profile.
       'config-sections',
+      'visual-config-editor',
       ...(systemProxy ? ['system-proxy'] : []),
       ...(kernelManager ? ['kernel-version'] : []),
       ...(tunController ? ['tun'] : []),
@@ -94,6 +124,7 @@ export function createAgent(opts: CreateAgentOptions) {
   const router = createControlRouter({
     supervisor,
     profiles,
+    profileEditor,
     info,
     homeDir: opts.homeDir,
     activeConfigPath: opts.activeConfigPath,
@@ -102,12 +133,31 @@ export function createAgent(opts: CreateAgentOptions) {
     kernelManager,
     tunController,
   })
-  // Wire the auto-update scheduler to the same profiles store. NOT started here —
-  // the desktop boot decides when to start ticking.
-  const scheduler = createProfileScheduler({ profiles })
+  // Wire the auto-update scheduler to the same profiles store. NOT started here
+  // — the server boot plugin starts it (the desktop builds its own scheduler so
+  // it can surface per-refresh notifications, and does NOT start this one).
+  //
+  // Auto-update should take effect, not just refresh a stored file: when a
+  // scheduled refresh hits the ACTIVE base, re-compose + restart so the running
+  // kernel actually picks up the new subscription (#2107). Best-effort and
+  // fire-and-forget (the scheduler never awaits onResult) — a failing apply must
+  // not wedge the tick loop; the next tick retries.
+  const scheduler = createProfileScheduler({
+    profiles,
+    onResult: (r) => {
+      if (!r.ok) return
+      // Auto-update should take effect, not just refresh a stored file: when a
+      // scheduled refresh hits the ACTIVE base, re-compose + restart so the
+      // running kernel picks up the new subscription (#2107). Best-effort and
+      // fire-and-forget (the scheduler never awaits onResult) — a failing apply
+      // must not wedge the tick loop; the next tick retries.
+      void applyActiveRefresh(profiles, supervisor, r.id).catch(() => {})
+    },
+  })
   return {
     supervisor,
     profiles,
+    profileEditor,
     router,
     info,
     scheduler,

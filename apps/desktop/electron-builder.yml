@@ -4,6 +4,15 @@ productName: MetaCubeXD
 # it from the package name (@metacubexd/desktop -> @metacubexddesktop), whose `@`
 # is rejected by the Linux AppImage builder.
 executableName: metacubexd
+# Deep-link URL schemes (subscription import). REQUIRED for packaged macOS:
+# app.setAsDefaultProtocolClient only works for schemes already declared in the
+# bundle's Info.plist (CFBundleURLTypes) — without this the clash:// links
+# never reach the app. Windows/Linux get registry/desktop-file entries too.
+protocols:
+  - name: Clash Subscription
+    schemes:
+      - clash
+      - clashmeta
 # No auto-update / no publish provider: the app updates manually. Without this,
 # electron-builder tries to auto-detect a GitHub publish provider, fails
 # ("Cannot detect repository"), then crashes in computeChannelNames (reading
@@ -36,9 +45,12 @@ asarUnpack:
   # (`<electron-bin> out/helper/index.js`, ELECTRON_RUN_AS_NODE=1). A file inside
   # app.asar can't be spawned that way, so unpack it.
   # resolveHelperEntry() points at <resourcesPath>/app.asar.unpacked/out/helper/index.js.
+  # The multi-entry build shares modules with main via out/chunks. Those imports
+  # must also exist beside the unpacked helper when Electron runs it as Node.
   # NOTE: mihomo + wintun.dll ship via extraResources (outside the asar
-  # entirely), so they need no asarUnpack entry here — only the helper does.
+  # entirely), so they need no asarUnpack entry here.
   - 'out/helper/**'
+  - 'out/chunks/**'
 # NOTE: mihomo is staged per-platform below (mac/linux: `mihomo`, win:
 # `mihomo.exe`) because electron-builder does NOT define the `${ext}` macro in
 # extraResources `from`/`to` (it only exists in artifact-name context), so a
@@ -89,7 +101,11 @@ nsis:
   allowToChangeInstallationDirectory: true
   perMachine: false
 linux:
-  icon: build/icon.png
+  # Native packages install this set into the matching hicolor size buckets.
+  # A single 1024px PNG only produced hicolor/1024x1024, which some Linux
+  # desktops do not consider when resolving the Icon=metacubexd entry.
+  icon: build/icons
+  syncDesktopName: true
   extraResources:
     - from: resources/mihomo
       to: mihomo
@@ -102,7 +118,26 @@ linux:
       arch:
         - x64
         - arm64
+    # Fedora, RHEL, openSUSE, and other RPM-based distributions.
+    - target: rpm
+      arch:
+        - x64
+        - arm64
+    # Arch Linux and derivatives. electron-builder emits a .pacman archive
+    # that can be installed directly with `pacman -U`.
+    - target: pacman
+      arch:
+        - x64
+        - arm64
   category: Network
-  # Required by the .deb (fpm) target.
+  # Required by the deb/rpm/pacman (fpm) targets.
   maintainer: MetaCubeX <maintainers@metacubex.one>
   artifactName: ${productName}-${version}-linux-${arch}.${ext}
+# Native package managers require/conventionally use a lowercase package
+# identifier; do not derive this from the mixed-case productName.
+deb:
+  packageName: metacubexd
+rpm:
+  packageName: metacubexd
+pacman:
+  packageName: metacubexd

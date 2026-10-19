@@ -42,6 +42,11 @@ const {
 const reference = ref<HTMLElement | null>(null)
 const isTooltipOpen = ref(false)
 
+// Touch-primary devices: the floating popover is `strategy: fixed` and
+// re-anchors on scroll, riding along with the list and covering node rows —
+// no way to tap another node. Skip the popover on mobile; taps select the node.
+const isTouchDevice = useMediaQuery('(pointer: coarse)')
+
 let openTimeout: ReturnType<typeof setTimeout> | null = null
 let closeTimeout: ReturnType<typeof setTimeout> | null = null
 
@@ -57,6 +62,7 @@ function clearTimeouts() {
 }
 
 function openTooltip() {
+  if (isTouchDevice.value) return
   acquireSingletonPopover(closeTooltip)
   isTooltipOpen.value = true
 }
@@ -107,14 +113,14 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <!-- Wrapper for glow effect -->
+  <!-- Wrapper lifts the selected row above its neighbours -->
   <div class="relative z-0" :class="isSelected ? 'z-10' : ''">
     <div
       ref="reference"
       class="relative rounded-lg transition-all duration-300"
       :class="
         isSelected
-          ? 'animate-glow-pulse bg-primary text-primary-content'
+          ? 'bg-primary/15 text-base-content shadow-[inset_2px_0_var(--color-primary)]'
           : 'bg-neutral text-neutral-content hover:shadow-md'
       "
       @mouseenter="onMouseEnter"
@@ -132,7 +138,10 @@ onBeforeUnmount(() => {
         @keydown.space.prevent="onClick"
       >
         <!-- Selected indicator -->
-        <IconCircleCheckFilled v-if="isSelected" class="size-4 shrink-0" />
+        <IconCircleCheckFilled
+          v-if="isSelected"
+          class="size-4 shrink-0 text-primary"
+        />
 
         <!-- Proxy name -->
         <span class="line-clamp-1 min-w-0 flex-1 text-sm font-medium break-all">

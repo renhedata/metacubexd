@@ -3,6 +3,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useProfiles } from '../useProfiles'
 
+const { invalidateQueries } = vi.hoisted(() => ({
+  invalidateQueries: vi.fn(),
+}))
+vi.mock('@tanstack/vue-query', () => ({
+  useQueryClient: () => ({ invalidateQueries }),
+}))
+vi.mock('../useQueries', () => ({ queryKeys: { config: ['config'] } }))
+
 const api = {
   listProfiles: vi.fn(),
   createProfile: vi.fn(),
@@ -13,6 +21,7 @@ const api = {
   importProfile: vi.fn(),
   activateProfile: vi.fn(),
   refreshProfile: vi.fn(),
+  refreshAndActivateProfile: vi.fn(),
   validateProfile: vi.fn(),
 }
 vi.mock('../useControlApi', () => ({ useControlApi: () => api }))
@@ -73,6 +82,26 @@ describe('composables/useProfiles', () => {
     expect(p.profiles.value.map((m) => m.id)).toEqual(['a', 'b'])
   })
 
+  it('refresh() seeds activeBaseId from the agent `active` flag (#2148)', async () => {
+    api.listProfiles.mockResolvedValue([
+      { ...meta('a'), active: false },
+      { ...meta('b'), active: true },
+    ])
+    const p = useProfiles()
+    await p.refresh()
+    expect(p.activeBaseId.value).toBe('b')
+  })
+
+  it('refresh() ignores merge/script profiles when seeding activeBaseId', async () => {
+    api.listProfiles.mockResolvedValue([
+      { ...mergeMeta('m'), active: true },
+      { ...meta('a'), active: false },
+    ])
+    const p = useProfiles()
+    await p.refresh()
+    expect(p.activeBaseId.value).toBeUndefined()
+  })
+
   it('create() then re-lists', async () => {
     api.createProfile.mockResolvedValue(meta('c'))
     const p = useProfiles()
@@ -115,6 +144,16 @@ describe('composables/useProfiles', () => {
     expect(api.listProfiles).toHaveBeenCalled()
   })
 
+  it('setUpdateInterval() persists minutes then re-lists (#2107)', async () => {
+    api.updateProfile.mockResolvedValue(meta('a'))
+    const p = useProfiles()
+    await p.setUpdateInterval('a', 60)
+    expect(api.updateProfile).toHaveBeenCalledWith('a', {
+      updateInterval: 60,
+    })
+    expect(api.listProfiles).toHaveBeenCalled()
+  })
+
   it('validate() returns the validate result', async () => {
     api.validateProfile.mockResolvedValue({ valid: true, message: 'ok' })
     const p = useProfiles()
@@ -132,6 +171,19 @@ describe('composables/useProfiles', () => {
     const state = await p.activate('a')
     expect(state.status).toBe('running')
     expect(api.listProfiles).toHaveBeenCalled()
+  })
+
+  it('activate() invalidates the cached runtime config mode (#2137)', async () => {
+    api.activateProfile.mockResolvedValue({
+      status: 'running',
+      externalController: '127.0.0.1:9090',
+      secret: 's',
+    })
+    const p = useProfiles()
+
+    await p.activate('a')
+
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: ['config'] })
   })
 
   it('activate() drops active connections so the new profile takes effect immediately', async () => {
@@ -234,13 +286,16 @@ describe('composables/useProfiles', () => {
   })
 
   describe('script profiles', () => {
-    it('createScript() POSTs { name, type: "script" } then re-lists', async () => {
+    it('createScript() POSTs { name, type: "script", content } with a working template then re-lists', async () => {
       api.createProfile.mockResolvedValue(scriptMeta('s'))
       const p = useProfiles()
       await p.createScript('transform')
+      // Seed a working function export so the contract is obvious — Clash
+      // Verge / FlClash's main() style errors here (#2155).
       expect(api.createProfile).toHaveBeenCalledWith({
         name: 'transform',
         type: 'script',
+        content: expect.stringContaining('export default (config)'),
       })
       expect(api.listProfiles).toHaveBeenCalled()
     })
@@ -334,6 +389,39 @@ describe('composables/useProfiles', () => {
       const p = useProfiles()
       const ok = await p.refreshRemote('local1')
       expect(toast.error).toHaveBeenCalled()
+      expect(ok).toBe(false)
+    })
+  })
+
+  describe('refreshAndApply', () => {
+    it('refreshes + applies, re-lists, toasts success, returns true (#2108)', async () => {
+      api.refreshAndActivateProfile.mockResolvedValue({
+        meta: meta('a'),
+        kernel: { status: 'running' },
+      })
+      api.listProfiles.mockResolvedValue([meta('a')])
+      const p = useProfiles()
+      const ok = await p.refreshAndApply('a')
+      expect(api.refreshAndActivateProfile).toHaveBeenCalledWith('a')
+      expect(api.listProfiles).toHaveBeenCalled()
+      expect(toast.success).toHaveBeenCalled()
+      expect(ok).toBe(true)
+    })
+
+    it('surfaces a failed apply (e.g. validation) via toast.error, returns false', async () => {
+      api.refreshAndActivateProfile.mockRejectedValue(
+        Object.assign(new Error('Request failed with status code 400'), {
+          data: {
+            statusMessage: 'profile validation failed',
+            data: { error: 'GEOIP database download failed' },
+          },
+        }),
+      )
+      const p = useProfiles()
+      const ok = await p.refreshAndApply('a')
+      expect(toast.error).toHaveBeenCalledWith('profilesRefreshFailed', {
+        description: 'GEOIP database download failed',
+      })
       expect(ok).toBe(false)
     })
   })

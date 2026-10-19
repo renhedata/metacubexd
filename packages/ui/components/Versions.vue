@@ -22,12 +22,16 @@ interface Props {
   frontendVersion?: string
   backendVersion?: string
   collapsed?: boolean
+  // Side-by-side badges on mobile, stacked from sm up — for page headers like
+  // /config where the default one-per-row grid renders as two full-width slabs.
+  horizontal?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
   frontendVersion: '',
   backendVersion: '',
   collapsed: false,
+  horizontal: false,
 })
 
 // Get versions from runtime config and queries if not provided
@@ -314,7 +318,11 @@ watch(
 </script>
 
 <template>
-  <div v-if="!collapsed" class="mx-2 grid grid-cols-1 gap-2 pt-1 md:mx-0">
+  <div
+    v-if="!collapsed"
+    class="mx-2 grid grid-cols-1 gap-2 pt-1 md:mx-0"
+    :class="horizontal ? 'grid-cols-2 sm:grid-cols-1' : ''"
+  >
     <!-- Frontend Version -->
     <button
       ref="frontendReference"
@@ -440,7 +448,7 @@ watch(
   <div v-else class="flex justify-center pt-1">
     <button
       type="button"
-      class="press-tactile relative flex aspect-square w-9 items-center justify-center rounded-lg border border-[color-mix(in_oklch,var(--color-base-content)_10%,transparent)] bg-transparent text-base-content/70 hover:border-[color-mix(in_oklch,var(--color-base-content)_20%,transparent)] hover:bg-[color-mix(in_oklch,var(--color-base-content)_5%,transparent)] hover:text-base-content"
+      class="press-tactile relative flex aspect-square w-9 items-center justify-center rounded-lg border border-[color-mix(in_oklab,var(--color-base-content)_10%,transparent)] bg-transparent text-base-content/70 hover:border-[color-mix(in_oklab,var(--color-base-content)_20%,transparent)] hover:bg-[color-mix(in_oklab,var(--color-base-content)_5%,transparent)] hover:text-base-content"
       :title="versionsTitle"
       :aria-label="versionsTitle"
       @click="onCollapsedClick"
@@ -463,12 +471,12 @@ watch(
 <style scoped>
 .version-badge {
   border: 1px solid
-    color-mix(in oklch, var(--color-base-content) 20%, transparent);
-  background: color-mix(in oklch, var(--color-base-200) 80%, transparent);
+    color-mix(in oklab, var(--color-base-content) 20%, transparent);
+  background: color-mix(in oklab, var(--color-base-200) 80%, transparent);
   color: var(--color-base-content);
 }
 
 .version-badge:hover {
-  background: color-mix(in oklch, var(--color-base-content) 10%, transparent);
+  background: color-mix(in oklab, var(--color-base-content) 10%, transparent);
 }
 </style>

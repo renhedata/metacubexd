@@ -1,5 +1,6 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { nextTick } from 'vue'
 import { useConfigStore } from '../config'
 
 const localStorageMock = (() => {
@@ -23,6 +24,23 @@ const localStorageMock = (() => {
 })()
 
 vi.stubGlobal('localStorage', localStorageMock)
+
+describe('proxies display mode migration', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    localStorageMock.clear()
+  })
+
+  it('migrates the removed chips mode to card mode', async () => {
+    localStorage.setItem('proxiesDisplayMode', 'chipsMode')
+
+    const store = useConfigStore()
+
+    expect(store.proxiesDisplayMode).toBe('cardMode')
+    await nextTick()
+    expect(localStorage.getItem('proxiesDisplayMode')).toBe('cardMode')
+  })
+})
 
 describe('connections display mode migration', () => {
   beforeEach(() => {
@@ -62,5 +80,33 @@ describe('connections display mode migration', () => {
     const store = useConfigStore()
 
     expect(store.connectionsDisplayMode).toBe('card')
+  })
+})
+
+describe('resolveLatencyTestUrl (latencyTestUrlSource, #2082)', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    localStorageMock.clear()
+  })
+
+  it("defaults to 'core': the group's testUrl wins, dashboard url is the fallback", () => {
+    const store = useConfigStore()
+
+    expect(store.latencyTestUrlSource).toBe('core')
+    expect(store.resolveLatencyTestUrl('https://group.test/204')).toBe(
+      'https://group.test/204',
+    )
+    expect(store.resolveLatencyTestUrl(null)).toBe(store.urlForLatencyTest)
+    expect(store.resolveLatencyTestUrl('')).toBe(store.urlForLatencyTest)
+  })
+
+  it("in 'dashboard' mode the dashboard url always overrides the group testUrl", () => {
+    const store = useConfigStore()
+    store.latencyTestUrlSource = 'dashboard'
+
+    expect(store.resolveLatencyTestUrl('https://group.test/204')).toBe(
+      store.urlForLatencyTest,
+    )
+    expect(store.resolveLatencyTestUrl(null)).toBe(store.urlForLatencyTest)
   })
 })

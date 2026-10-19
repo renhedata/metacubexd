@@ -38,21 +38,33 @@
 
   /* Lift shadows — unify hover dimensionality across surfaces */
   --lift-1:
-    0 2px 6px color-mix(in oklch, var(--color-base-content) 8%, transparent),
-    0 1px 2px color-mix(in oklch, var(--color-base-content) 4%, transparent);
+    0 2px 6px color-mix(in oklab, var(--color-base-content) 8%, transparent),
+    0 1px 2px color-mix(in oklab, var(--color-base-content) 4%, transparent);
   --lift-2:
-    0 6px 18px color-mix(in oklch, var(--color-base-content) 12%, transparent),
-    0 2px 6px color-mix(in oklch, var(--color-base-content) 6%, transparent);
+    0 6px 18px color-mix(in oklab, var(--color-base-content) 12%, transparent),
+    0 2px 6px color-mix(in oklab, var(--color-base-content) 6%, transparent);
   --lift-3:
-    0 14px 32px color-mix(in oklch, var(--color-base-content) 16%, transparent),
-    0 4px 10px color-mix(in oklch, var(--color-base-content) 8%, transparent);
+    0 14px 32px color-mix(in oklab, var(--color-base-content) 16%, transparent),
+    0 4px 10px color-mix(in oklab, var(--color-base-content) 8%, transparent);
 
   /* Inner highlight ("light catch") for cards and pressables */
   --inner-highlight: inset 0 1px 0 0
-    color-mix(in oklch, var(--color-base-content) 6%, transparent);
+    color-mix(in oklab, var(--color-base-content) 6%, transparent);
 
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
+}
+
+/* The application shell owns the viewport; individual pages, drawers, and
+   dialogs provide their own scrollports. Lock the document-level height and
+   overflow so touch momentum cannot chain into the page and move the mobile
+   header out of view. */
+html,
+body,
+#__nuxt {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior-y: none;
 }
 
 ::-webkit-scrollbar {
@@ -108,30 +120,6 @@ body {
     'Noto Sans CJK SC', system-ui, sans-serif;
 }
 
-/* Animated glow pulse effect for selected items */
-@keyframes glow-pulse {
-  0%,
-  100% {
-    box-shadow:
-      0 0 6px 1px color-mix(in oklch, var(--color-primary) 70%, transparent),
-      0 0 12px 2px color-mix(in oklch, var(--color-secondary) 40%, transparent);
-  }
-  33% {
-    box-shadow:
-      0 0 6px 1px color-mix(in oklch, var(--color-secondary) 70%, transparent),
-      0 0 12px 2px color-mix(in oklch, var(--color-accent) 40%, transparent);
-  }
-  66% {
-    box-shadow:
-      0 0 6px 1px color-mix(in oklch, var(--color-accent) 70%, transparent),
-      0 0 12px 2px color-mix(in oklch, var(--color-primary) 40%, transparent);
-  }
-}
-
-.animate-glow-pulse {
-  animation: glow-pulse 2s ease-in-out infinite;
-}
-
 /* ============================================================
    Reusable motion utilities
    ============================================================ */
@@ -175,10 +163,10 @@ body {
   pointer-events: none;
   background: linear-gradient(
     180deg,
-    color-mix(in oklch, var(--color-base-content) 7%, transparent) 0%,
+    color-mix(in oklab, var(--color-base-content) 7%, transparent) 0%,
     transparent 22%,
     transparent 78%,
-    color-mix(in oklch, var(--color-base-content) 3%, transparent) 100%
+    color-mix(in oklab, var(--color-base-content) 3%, transparent) 100%
   );
   opacity: 0.7;
   z-index: 1;

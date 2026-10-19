@@ -1,9 +1,12 @@
+import type { ConfigPatchV1 } from '@metacubexd/config-editor'
 import type {
   ControlInfo,
   GeoUpdateResult,
   KernelState,
   KernelVersions,
   ProfileDetail,
+  ProfileEditorPreview,
+  ProfileEditorSnapshot,
   ProfileMeta,
   SystemProxyState,
   TunStatus,
@@ -14,6 +17,15 @@ import type {
 } from '~/types/control'
 // packages/ui/composables/useControlApi.ts
 import ky from 'ky'
+
+// Profile validation can trigger Mihomo's first-run GEO database download.
+// Keep ordinary control requests on the client's 15s default. These finite
+// budgets outlive the agent's 300s validator, 5s reap grace, kernel lifecycle,
+// and (for refresh+apply) bounded subscription fetch (#2118, #2121).
+const PROFILE_SUBSCRIPTION_TIMEOUT = 45_000
+const PROFILE_VALIDATE_TIMEOUT = 330_000
+const PROFILE_ACTIVATE_TIMEOUT = 360_000
+const PROFILE_REFRESH_AND_ACTIVATE_TIMEOUT = 390_000
 
 export interface ControlConfig {
   base: string
@@ -50,7 +62,7 @@ export function resolveControlConfig(): ControlConfig {
 }
 
 function stripTrailingSlash(s: string): string {
-  return s.replace(/\/$/, '')
+  return s.endsWith('/') ? s.slice(0, -1) : s
 }
 
 export function useControlApi() {
@@ -69,6 +81,13 @@ export function useControlApi() {
     startKernel: () => client.post('kernel/start').json<KernelState>(),
     stopKernel: () => client.post('kernel/stop').json<KernelState>(),
     restartKernel: () => client.post('kernel/restart').json<KernelState>(),
+    // Restore the last-known-good active config (.bak from the previous
+    // activate) and restart — escape hatch for a config that bricks the kernel
+    // (#2109). 404s when no backup exists.
+    rollbackKernel: () => client.post('kernel/rollback').json<KernelState>(),
+    // Reset to a minimal (header-only) config + restart on mihomo defaults.
+    // Last-resort recovery when even the backup is bad (#2109).
+    recoverKernel: () => client.post('kernel/recover').json<KernelState>(),
     // EventSource cannot send Authorization headers, so the SSE route also
     // accepts ?token= (SHARED CONTRACTS). Desktop in-process binding skips
     // auth, but passing the token there is harmless.
@@ -88,26 +107,86 @@ export function useControlApi() {
       client.get(`profiles/${id}`).json<ProfileDetail>(),
     updateProfile: (
       id: string,
-      body: { name?: string; content?: string; enabled?: boolean },
+      body: {
+        name?: string
+        content?: string
+        enabled?: boolean
+        // minutes; remote-only. 0 disables auto-update.
+        updateInterval?: number
+      },
     ) => client.put(`profiles/${id}`, { json: body }).json<ProfileMeta>(),
-    deleteProfile: (id: string) => client.delete(`profiles/${id}`).json<void>(),
+    // DELETE returns 204 No Content — there is no body to parse. Chaining
+    // .json() on an empty 204 throws "Unexpected end of JSON input" and makes a
+    // successful delete look like a failure (#2110).
+    deleteProfile: async (id: string) => {
+      await client.delete(`profiles/${id}`)
+    },
     duplicateProfile: (id: string, name?: string) =>
       client
         .post(`profiles/${id}/duplicate`, { json: { name } })
         .json<ProfileMeta>(),
     importProfile: (url: string, name?: string) =>
       client
-        .post('profiles/import', { json: { url, name } })
+        .post('profiles/import', {
+          json: { url, name },
+          timeout: PROFILE_SUBSCRIPTION_TIMEOUT,
+        })
         .json<ProfileMeta>(),
     activateProfile: (id: string) =>
-      client.post(`profiles/${id}/activate`).json<KernelState>(),
+      client
+        .post(`profiles/${id}/activate`, {
+          timeout: PROFILE_ACTIVATE_TIMEOUT,
+        })
+        .json<KernelState>(),
     // Re-fetch a REMOTE subscription in place (agent overwrites content +
-    // subscriptionInfo + updatedAt, keeping the same id). The agent rejects this
-    // for non-remote profiles.
+    // subscriptionInfo + updatedAt, keeping the same id). Pure refresh — it does
+    // NOT touch the running config; use refreshAndActivateProfile to apply.
     refreshProfile: (id: string) =>
-      client.post(`profiles/${id}/refresh`).json<ProfileMeta>(),
+      client
+        .post(`profiles/${id}/refresh`, {
+          timeout: PROFILE_SUBSCRIPTION_TIMEOUT,
+        })
+        .json<ProfileMeta>(),
+    // Combined refresh + apply: re-fetch, compose into active.yaml, validate,
+    // and restart. The action users expect from "refresh and make it take
+    // effect" (#2108). Returns the refreshed meta and the resulting state.
+    refreshAndActivateProfile: (id: string) =>
+      client
+        .post(`profiles/${id}/refresh-and-activate`, {
+          timeout: PROFILE_REFRESH_AND_ACTIVATE_TIMEOUT,
+        })
+        .json<{ meta: ProfileMeta; kernel: KernelState }>(),
     validateProfile: (id: string) =>
-      client.post(`profiles/${id}/validate`).json<ValidateResult>(),
+      client
+        .post(`profiles/${id}/validate`, {
+          timeout: PROFILE_VALIDATE_TIMEOUT,
+        })
+        .json<ValidateResult>(),
+
+    getProfileEditor: (id: string) =>
+      client.get(`profiles/${id}/editor`).json<ProfileEditorSnapshot>(),
+    previewProfileEditor: (id: string, patch: ConfigPatchV1) =>
+      client
+        .post(`profiles/${id}/editor/preview`, { json: { patch } })
+        .json<ProfileEditorPreview>(),
+    applyProfileEditor: (id: string, patch: ConfigPatchV1) =>
+      client
+        .put(`profiles/${id}/editor`, {
+          json: { patch },
+          timeout: PROFILE_ACTIVATE_TIMEOUT,
+        })
+        .json<{
+          profile: ProfileMeta
+          activeId: string
+          revision: string
+          kernel: KernelState
+        }>(),
+    resetProfileEditorOverlay: (id: string) =>
+      client
+        .delete(`profiles/${id}/editor/overlay`, {
+          timeout: PROFILE_ACTIVATE_TIMEOUT,
+        })
+        .json<KernelState | { ok: true }>(),
 
     // System proxy (capability-gated 'system-proxy'). GET reflects the current
     // OS proxy state; POST { enabled, bypass? } toggles it and echoes the state.

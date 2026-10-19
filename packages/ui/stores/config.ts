@@ -50,6 +50,14 @@ export const useConfigStore = defineStore('config', () => {
     'proxiesDisplayMode',
     PROXIES_DISPLAY_MODE.CARD,
   )
+  // Retired/unknown modes (including the removed `chipsMode`) must not leave
+  // the segmented switcher with no active item or a mismatched body layout.
+  const validProxiesDisplayModes = new Set<string>(
+    Object.values(PROXIES_DISPLAY_MODE),
+  )
+  if (!validProxiesDisplayModes.has(proxiesDisplayMode.value)) {
+    proxiesDisplayMode.value = PROXIES_DISPLAY_MODE.CARD
+  }
   const renderProxiesInTwoColumns = useLocalStorage(
     'renderProxiesInTwoColumns',
     true,
@@ -59,8 +67,6 @@ export const useConfigStore = defineStore('config', () => {
     'proxiesCardSize',
     PROXIES_CARD_SIZE.COMFORTABLE,
   )
-  // Keep the group header pinned to the top while scrolling a long expanded group
-  const stickyGroupHeader = useLocalStorage('stickyGroupHeader', true)
   const hideUnAvailableProxies = useLocalStorage(
     'hideUnAvailableProxies',
     false,
@@ -68,6 +74,16 @@ export const useConfigStore = defineStore('config', () => {
   const urlForLatencyTest = useLocalStorage(
     'urlForLatencyTest',
     'https://www.gstatic.com/generate_204',
+  )
+  // Which URL a latency test probes against (#2082):
+  //   'core'      — the kernel's per-group/per-provider `testUrl` wins, falling
+  //                 back to the dashboard url when a group defines none. Lets two
+  //                 groups over the same nodes test against different urls.
+  //   'dashboard' — the single dashboard url always wins, overriding any
+  //                 per-group url (a uniform probe across every group).
+  const latencyTestUrlSource = useLocalStorage<'core' | 'dashboard'>(
+    'latencyTestUrlSource',
+    'core',
   )
   const autoCloseConns = useLocalStorage('autoCloseConns', true)
   const latencyTestTimeoutDuration = useLocalStorage(
@@ -128,9 +144,7 @@ export const useConfigStore = defineStore('config', () => {
       localStorage.removeItem('useMobileConnectionsTable')
       try {
         return (JSON.parse(legacyRaw) === true ? 'table' : 'auto') as
-          | 'auto'
-          | 'table'
-          | 'card'
+          'auto' | 'table' | 'card'
       } catch {
         return 'auto' as const
       }
@@ -150,8 +164,9 @@ export const useConfigStore = defineStore('config', () => {
   const logLevel = useLocalStorage<LOG_LEVEL>('logLevel', LOG_LEVEL.Info)
   const logMaxRows = useLocalStorage('logMaxRows', DEFAULT_LOGS_TABLE_MAX_ROWS)
 
-  // Quick filter regex for connections
-  const quickFilterRegex = useLocalStorage(
+  // Literal quick-filter terms for connections. Keep the legacy storage key so
+  // existing pipe-separated defaults and user preferences migrate in place.
+  const quickFilterText = useLocalStorage(
     'quickFilterRegex',
     'DIRECT|direct|dns-out',
   )
@@ -250,6 +265,15 @@ export const useConfigStore = defineStore('config', () => {
   // users restyle the dashboard arbitrarily; see useCustomCss for application.
   const customCss = useLocalStorage('customCss', '')
 
+  // Resolve the effective latency-test URL for a group/provider/node given its
+  // kernel-configured `testUrl`, honoring latencyTestUrlSource (#2082). In
+  // 'core' mode this is the historical `groupTestUrl || urlForLatencyTest`; in
+  // 'dashboard' mode the dashboard url always overrides.
+  const resolveLatencyTestUrl = (groupTestUrl?: string | null) =>
+    latencyTestUrlSource.value === 'dashboard'
+      ? urlForLatencyTest.value
+      : groupTestUrl || urlForLatencyTest.value
+
   // Computed
   const isLatencyTestByHttps = computed(() =>
     urlForLatencyTest.value.startsWith('https'),
@@ -291,9 +315,9 @@ export const useConfigStore = defineStore('config', () => {
     proxiesDisplayMode.value = PROXIES_DISPLAY_MODE.CARD
     renderProxiesInTwoColumns.value = true
     proxiesCardSize.value = PROXIES_CARD_SIZE.COMFORTABLE
-    stickyGroupHeader.value = true
     hideUnAvailableProxies.value = false
     urlForLatencyTest.value = 'https://www.gstatic.com/generate_204'
+    latencyTestUrlSource.value = 'core'
     autoCloseConns.value = true
     latencyTestTimeoutDuration.value = 5000
     latencyMediumThreshold.value = 0
@@ -340,9 +364,10 @@ export const useConfigStore = defineStore('config', () => {
     proxiesDisplayMode,
     renderProxiesInTwoColumns,
     proxiesCardSize,
-    stickyGroupHeader,
     hideUnAvailableProxies,
     urlForLatencyTest,
+    latencyTestUrlSource,
+    resolveLatencyTestUrl,
     autoCloseConns,
     latencyTestTimeoutDuration,
     latencyMediumThreshold,
@@ -366,7 +391,7 @@ export const useConfigStore = defineStore('config', () => {
     connectionsTableColumnVisibility,
     connectionsTableColumnOrder,
     connectionsDisplayMode,
-    quickFilterRegex,
+    quickFilterText,
     // Logs
     logsTableSize,
     logLevel,

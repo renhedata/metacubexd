@@ -8,6 +8,8 @@ import { join } from 'node:path'
 import { toNodeListener } from 'h3'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createControlRouter } from './http'
+import { SubscriptionFetchError } from './profiles'
+import { ProfileEditorConflictError } from './profile-editor'
 import { TunPreconditionError } from './tun'
 
 function fakeState(over: Partial<KernelState> = {}): KernelState {
@@ -90,6 +92,8 @@ function makeDeps(token?: string) {
     })),
     getActiveId: vi.fn(async (): Promise<string | undefined> => undefined),
     setActive: vi.fn(async () => {}),
+    rollback: vi.fn(async () => true),
+    resetActive: vi.fn(async () => {}),
     getSection: vi.fn(async (): Promise<unknown> => null),
     setSection: vi.fn(async () => {}),
   }
@@ -101,7 +105,8 @@ function makeDeps(token?: string) {
     features: ['profiles', 'logs-sse', 'kernel-control'],
   }))
   const homeDir = mkdtempSync(join(tmpdir(), 'mcxd-http-'))
-  return { supervisor, profiles, info, homeDir, token }
+  const activeConfigPath = join(homeDir, 'active.yaml')
+  return { supervisor, profiles, info, homeDir, activeConfigPath, token }
 }
 
 async function mount(deps: ReturnType<typeof makeDeps>) {
@@ -274,6 +279,28 @@ describe('createControlRouter — profiles + SSE', () => {
     expect(deps.profiles.update).toHaveBeenCalledWith('p1', { name: 'renamed' })
   })
 
+  it('rejects direct edits to managed visual overlays', async () => {
+    const deps = makeDeps()
+    deps.profiles.list.mockResolvedValue([
+      {
+        id: 'p1',
+        name: 'managed',
+        type: 'merge',
+        managedBy: 'visual-editor',
+        baseProfileId: 'base',
+        updatedAt: 1,
+      },
+    ])
+    srv = await mount(deps)
+    const res = await fetch(`${srv.base}/api/control/profiles/p1`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ content: 'broken: true\n' }),
+    })
+    expect(res.status).toBe(403)
+    expect(deps.profiles.update).not.toHaveBeenCalled()
+  })
+
   it('dELETE /api/control/profiles/:id returns 204', async () => {
     const deps = makeDeps()
     srv = await mount(deps)
@@ -307,6 +334,28 @@ describe('createControlRouter — profiles + SSE', () => {
     )
   })
 
+  it('pOST /api/control/profiles/import preserves an upstream 429 response (#2138)', async () => {
+    const deps = makeDeps()
+    deps.profiles.importFromUrl.mockRejectedValue(
+      new SubscriptionFetchError(429),
+    )
+    srv = await mount(deps)
+    const res = await fetch(`${srv.base}/api/control/profiles/import`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ url: 'https://sub.example/limited' }),
+    })
+
+    expect(res.status).toBe(429)
+    expect(await res.json()).toMatchObject({
+      statusCode: 429,
+      data: {
+        error: 'Subscription provider returned HTTP 429',
+        upstreamStatus: 429,
+      },
+    })
+  })
+
   it('pOST /api/control/profiles/:id/refresh returns the updated meta', async () => {
     const deps = makeDeps()
     srv = await mount(deps)
@@ -321,17 +370,141 @@ describe('createControlRouter — profiles + SSE', () => {
     expect(body.updatedAt).toBe(6)
   })
 
-  it('pOST /api/control/profiles/:id/activate sets active then returns KernelState', async () => {
+  it('pOST /api/control/profiles/:id/refresh is a pure re-fetch (no apply)', async () => {
+    const deps = makeDeps()
+    deps.profiles.getActiveId = vi.fn(async () => 'p1')
+    srv = await mount(deps)
+    const res = await fetch(`${srv.base}/api/control/profiles/p1/refresh`, {
+      method: 'POST',
+    })
+    expect(res.status).toBe(200)
+    expect(deps.profiles.refresh).toHaveBeenCalledWith('p1')
+    // Pure refresh never touches the running config — apply is a separate action.
+    expect(deps.profiles.setActive).not.toHaveBeenCalled()
+    expect(deps.supervisor.restart).not.toHaveBeenCalled()
+  })
+
+  it('pOST /profiles/:id/refresh-and-activate refreshes, activates (validates), and restarts (#2108)', async () => {
+    const deps = makeDeps()
+    srv = await mount(deps)
+    const res = await fetch(
+      `${srv.base}/api/control/profiles/p1/refresh-and-activate`,
+      { method: 'POST' },
+    )
+    expect(res.status).toBe(200)
+    expect(deps.profiles.refresh).toHaveBeenCalledWith('p1')
+    expect(deps.profiles.setActive).toHaveBeenCalledWith('p1')
+    expect(deps.supervisor.validate).toHaveBeenCalledWith(deps.activeConfigPath)
+    expect(deps.supervisor.restart).toHaveBeenCalledOnce()
+    const body = (await res.json()) as {
+      meta: { id: string; type: string }
+      kernel: { status: string }
+    }
+    expect(body.meta.id).toBe('p1')
+    expect(body.meta.type).toBe('remote')
+    expect(body.kernel.status).toBe('running')
+  })
+
+  it('pOST /profiles/:id/refresh-and-activate returns 400 + restores prior when validation fails (#2109)', async () => {
+    const deps = makeDeps()
+    deps.profiles.getActiveId = vi.fn(async () => 'old')
+    deps.supervisor.validate = vi.fn(async () => ({
+      valid: false,
+      message: 'parse error near line 3',
+    }))
+    srv = await mount(deps)
+    const res = await fetch(
+      `${srv.base}/api/control/profiles/p1/refresh-and-activate`,
+      { method: 'POST' },
+    )
+    expect(res.status).toBe(400)
+    // New (bad) candidate composed, then prior profile restored.
+    expect(deps.profiles.setActive).toHaveBeenCalledWith('p1')
+    expect(deps.profiles.setActive).toHaveBeenCalledWith('old')
+    expect(deps.supervisor.restart).not.toHaveBeenCalled()
+  })
+
+  it('pUT /api/control/profiles/:id passes through updateInterval (#2107)', async () => {
+    const deps = makeDeps()
+    srv = await mount(deps)
+    const res = await fetch(`${srv.base}/api/control/profiles/p1`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ updateInterval: 60 }),
+    })
+    expect(res.status).toBe(200)
+    expect(deps.profiles.update).toHaveBeenCalledWith('p1', {
+      updateInterval: 60,
+    })
+  })
+
+  it('pOST /api/control/kernel/rollback restores the backup + restarts (#2109)', async () => {
+    const deps = makeDeps()
+    srv = await mount(deps)
+    const res = await fetch(`${srv.base}/api/control/kernel/rollback`, {
+      method: 'POST',
+    })
+    expect(res.status).toBe(200)
+    expect(deps.profiles.rollback).toHaveBeenCalled()
+    expect(deps.supervisor.restart).toHaveBeenCalled()
+  })
+
+  it('pOST /api/control/kernel/rollback 404s when no backup exists (#2109)', async () => {
+    const deps = makeDeps()
+    deps.profiles.rollback = vi.fn(async () => false)
+    srv = await mount(deps)
+    const res = await fetch(`${srv.base}/api/control/kernel/rollback`, {
+      method: 'POST',
+    })
+    expect(res.status).toBe(404)
+    expect(deps.supervisor.restart).not.toHaveBeenCalled()
+  })
+
+  it('pOST /api/control/kernel/recover resets to minimal + restarts (#2109)', async () => {
+    const deps = makeDeps()
+    srv = await mount(deps)
+    const res = await fetch(`${srv.base}/api/control/kernel/recover`, {
+      method: 'POST',
+    })
+    expect(res.status).toBe(200)
+    expect(deps.profiles.resetActive).toHaveBeenCalled()
+    expect(deps.supervisor.restart).toHaveBeenCalled()
+  })
+
+  it('pOST /api/control/profiles/:id/activate validates the composed config before restarting (#2109)', async () => {
     const deps = makeDeps()
     srv = await mount(deps)
     const res = await fetch(`${srv.base}/api/control/profiles/p1/activate`, {
       method: 'POST',
     })
     expect(deps.profiles.setActive).toHaveBeenCalledWith('p1')
+    expect(deps.supervisor.validate).toHaveBeenCalledWith(deps.activeConfigPath)
     expect(deps.supervisor.restart).toHaveBeenCalledOnce()
     expect(((await res.json()) as Record<string, unknown>).status).toBe(
       'running',
     )
+  })
+
+  it('pOST /api/control/profiles/:id/activate returns 400 + restores prior active when validation fails (#2109)', async () => {
+    const deps = makeDeps()
+    deps.profiles.getActiveId = vi.fn(async () => 'old')
+    deps.supervisor.validate = vi.fn(async () => ({
+      valid: false,
+      message: 'parse error near line 3',
+    }))
+    srv = await mount(deps)
+    const res = await fetch(`${srv.base}/api/control/profiles/p1/activate`, {
+      method: 'POST',
+    })
+    expect(res.status).toBe(400)
+    expect(await res.json()).toMatchObject({
+      statusMessage: 'profile validation failed',
+      data: { error: 'parse error near line 3' },
+    })
+    expect(deps.profiles.setActive).toHaveBeenCalledWith('p1')
+    // Prior profile restored so the bad candidate does not persist.
+    expect(deps.profiles.setActive).toHaveBeenCalledWith('old')
+    expect(deps.supervisor.restart).not.toHaveBeenCalled()
   })
 
   it('pOST /api/control/profiles/:id/validate materializes a temp candidate then returns { valid, message }', async () => {
@@ -351,12 +524,104 @@ describe('createControlRouter — profiles + SSE', () => {
     expect(validatedPath).not.toBe('p1')
   })
 
+  it('exposes visual profile editor open/preview/apply/reset routes', async () => {
+    const deps = makeDeps()
+    const snapshot = {
+      profile: { id: 'p1', name: 'home', type: 'local' as const, updatedAt: 1 },
+      active: false,
+      revision: 'rev',
+      editableYaml: 'mode: rule\n',
+      composedYaml: 'mode: rule\n',
+      schemaVersion: 'schema',
+      composition: [],
+      diagnostics: [],
+      conflicts: [],
+    }
+    const profileEditor = {
+      open: vi.fn(async () => snapshot),
+      preview: vi.fn(async () => ({
+        ...snapshot,
+        patch: { version: 1 as const, baseRevision: 'rev', operations: [] },
+      })),
+      apply: vi.fn(async () => ({
+        profile: snapshot.profile,
+        activeId: 'p1',
+        revision: 'rev',
+        kernel: fakeState({ status: 'running' }),
+      })),
+      resetManagedOverlay: vi.fn(async () => undefined),
+    }
+    srv = await mount({ ...deps, profileEditor } as never)
+    expect(
+      await fetch(`${srv.base}/api/control/profiles/p1/editor`).then(
+        (r) => r.status,
+      ),
+    ).toBe(200)
+    const body = {
+      patch: { version: 1, baseRevision: 'rev', operations: [] },
+    }
+    expect(
+      await fetch(`${srv.base}/api/control/profiles/p1/editor/preview`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }).then((r) => r.status),
+    ).toBe(200)
+    expect(
+      await fetch(`${srv.base}/api/control/profiles/p1/editor`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }).then((r) => r.status),
+    ).toBe(200)
+    expect(
+      await fetch(`${srv.base}/api/control/profiles/p1/editor/overlay`, {
+        method: 'DELETE',
+      }).then((r) => r.status),
+    ).toBe(200)
+    expect(
+      await fetch(`${srv.base}/api/control/profiles/p1/editor/preview`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({}),
+      }).then((r) => r.status),
+    ).toBe(400)
+  })
+
+  it('maps visual editor conflicts to HTTP 409', async () => {
+    const deps = makeDeps()
+    const conflict = {
+      operation: {
+        op: 'set' as const,
+        target: { path: ['mode'] },
+        expectedHash: 'old',
+        value: 'global' as const,
+      },
+      path: ['mode'],
+      reason: 'changed' as const,
+      current: 'direct' as const,
+    }
+    const profileEditor = {
+      open: vi.fn(async () => {
+        throw new ProfileEditorConflictError([conflict])
+      }),
+      preview: vi.fn(),
+      apply: vi.fn(),
+      resetManagedOverlay: vi.fn(),
+    }
+    srv = await mount({ ...deps, profileEditor } as never)
+    const res = await fetch(`${srv.base}/api/control/profiles/p1/editor`)
+    expect(res.status).toBe(409)
+    expect((await res.json()) as object).toMatchObject({
+      data: { conflicts: [expect.objectContaining({ reason: 'changed' })] },
+    })
+  })
+
   it('gET /api/control/kernel/logs streams text/event-stream and pushes a state event', async () => {
     const deps = makeDeps()
     // Capture the registered 'log' callback so we can drive a fake log line.
     let logCb:
-      | ((l: { stream: string; line: string; ts: number }) => void)
-      | undefined
+      ((l: { stream: string; line: string; ts: number }) => void) | undefined
     deps.supervisor.on = vi.fn((event: string, cb: never) => {
       if (event === 'log') logCb = cb as never
     }) as never

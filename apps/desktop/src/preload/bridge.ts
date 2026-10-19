@@ -13,9 +13,37 @@ import type { IpcRenderer } from 'electron'
  *   window.*          — proxy to the main-process IPC channels registered by
  *                       window-controls.ts (custom title bar on Windows/Linux).
  */
+/** Payload the main process sends when Clash state changed outside the UI. */
+export interface BackendInvalidatePayload {
+  reason?: 'mode' | 'profile' | 'show' | string
+}
+
+/**
+ * Desktop-shell settings as the renderer sees them (mirrors
+ * main/desktop-settings.ts DesktopSettings — kept structurally identical, but
+ * declared here so preload never imports main-process code).
+ */
+export interface DesktopSettingsPayload {
+  silentUpdateCheck: boolean
+  tunAutoRestore: boolean
+  showTraySpeed: boolean
+}
+
+/**
+ * Hotkey bindings payload (mirrors main/desktop-ipc.ts HotkeysPayload): the
+ * current per-action accelerators, the defaults (for a Reset control), and
+ * which accelerators failed to register on the last apply.
+ */
+export interface HotkeysSettingsPayload {
+  bindings: Record<string, string>
+  defaults: Record<string, string>
+  failed: { action: string; accelerator: string }[]
+}
+
 export interface MetacubexdBridge {
   readonly isDesktop: true
   readonly platform: NodeJS.Platform
+  readonly githubToken?: string
   readonly control: { base?: string; token?: string }
   readonly endpoint: { url?: string; secret?: string }
   readonly window: {
@@ -25,6 +53,25 @@ export interface MetacubexdBridge {
     isMaximized: () => Promise<boolean>
     /** Subscribe to native maximize/unmaximize; returns an unsubscribe fn. */
     onMaximizeChange: (cb: (maximized: boolean) => void) => () => void
+  }
+  /**
+   * Subscribe to main-process "backend state changed" events (tray/hotkey mode
+   * switch, profile activate, window re-show). Returns an unsubscribe fn.
+   */
+  onBackendInvalidate: (
+    cb: (payload: BackendInvalidatePayload) => void,
+  ) => () => void
+  /** Desktop-shell settings (silent update check, TUN auto-restore, …). */
+  readonly settings: {
+    get: () => Promise<DesktopSettingsPayload>
+    set: (
+      patch: Partial<DesktopSettingsPayload>,
+    ) => Promise<DesktopSettingsPayload>
+  }
+  /** Global-hotkey bindings (read + apply with live re-registration). */
+  readonly hotkeys: {
+    get: () => Promise<HotkeysSettingsPayload>
+    set: (bindings: Record<string, string>) => Promise<HotkeysSettingsPayload>
   }
 }
 
@@ -40,6 +87,9 @@ export interface BridgeDeps {
 /** The channel the main process forwards native maximize/unmaximize on. */
 const MAXIMIZE_CHANGED = 'window:maximize-changed'
 
+/** Main → renderer: Clash/config state changed outside the SPA mutation path. */
+export const BACKEND_INVALIDATE = 'backend:invalidate'
+
 /**
  * Build the renderer bridge object from the preload runtime. Pure (no
  * contextBridge side effect) so the env→bridge mapping and the ipc wiring are
@@ -53,6 +103,7 @@ export function buildMetacubexdBridge({
   return {
     isDesktop: true,
     platform,
+    githubToken: env.GITHUB_TOKEN,
     control: {
       base: env.MCXD_CONTROL_BASE,
       token: env.MCXD_CONTROL_TOKEN,
@@ -73,6 +124,32 @@ export function buildMetacubexdBridge({
         ipc.on(MAXIMIZE_CHANGED, handler)
         return () => ipc.removeListener(MAXIMIZE_CHANGED, handler)
       },
+    },
+    onBackendInvalidate: (cb: (payload: BackendInvalidatePayload) => void) => {
+      const handler = (
+        _event: unknown,
+        payload: BackendInvalidatePayload,
+      ): void => cb(payload ?? {})
+      ipc.on(BACKEND_INVALIDATE, handler)
+      return () => ipc.removeListener(BACKEND_INVALIDATE, handler)
+    },
+    settings: {
+      get: () =>
+        ipc.invoke('desktop:get-settings') as Promise<DesktopSettingsPayload>,
+      set: (patch) =>
+        ipc.invoke(
+          'desktop:set-settings',
+          patch,
+        ) as Promise<DesktopSettingsPayload>,
+    },
+    hotkeys: {
+      get: () =>
+        ipc.invoke('desktop:get-hotkeys') as Promise<HotkeysSettingsPayload>,
+      set: (bindings) =>
+        ipc.invoke(
+          'desktop:set-hotkeys',
+          bindings,
+        ) as Promise<HotkeysSettingsPayload>,
     },
   }
 }

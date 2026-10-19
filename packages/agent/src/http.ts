@@ -1,4 +1,6 @@
+import type { ConfigPatchV1 } from '@metacubexd/config-editor'
 import type { App, H3Event } from 'h3'
+import type { ProfileConfigEditor } from './profile-editor'
 import type {
   KernelLogLine,
   KernelManager,
@@ -25,10 +27,34 @@ import {
   setResponseStatus,
 } from 'h3'
 import { fetchGeoAssets } from './kernel/geo'
+import { ConfigPatchConflictError } from './merge'
+import {
+  ProfileEditorConflictError,
+  ProfileEditorValidationError,
+} from './profile-editor'
+import { SubscriptionFetchError } from './profiles'
 import { TunPreconditionError } from './tun'
 import { createWebdavClient as defaultCreateWebdavClient } from './webdav'
 
 const BACKUP_FILENAME = 'metacubexd-backup.json'
+
+async function withSubscriptionHttpError<T>(
+  action: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await action()
+  } catch (error) {
+    if (error instanceof SubscriptionFetchError) {
+      const message = `Subscription provider returned HTTP ${error.upstreamStatus}`
+      throw createError({
+        statusCode: error.upstreamStatus,
+        statusMessage: message,
+        data: { error: message, upstreamStatus: error.upstreamStatus },
+      })
+    }
+    throw error
+  }
+}
 
 interface WebdavCredentials {
   url: string
@@ -40,6 +66,7 @@ interface WebdavCredentials {
 export interface ControlRouterDeps {
   supervisor: MihomoSupervisor
   profiles: ProfileStore
+  profileEditor?: ProfileConfigEditor // capability-gated visual profile editor
   info: () => unknown
   homeDir: string // writable dir for materializing validate candidate files
   activeConfigPath: string // file the kernel runs with -f (supervisor-injected at spawn)
@@ -60,6 +87,7 @@ export function createControlRouter(deps: ControlRouterDeps): App {
   const {
     supervisor,
     profiles,
+    profileEditor,
     info,
     homeDir,
     activeConfigPath,
@@ -125,6 +153,31 @@ export function createControlRouter(deps: ControlRouterDeps): App {
     `${PREFIX}/kernel/restart`,
     defineEventHandler(() => supervisor.restart()),
   )
+  // Restore the last-known-good active config (the .bak snapshot written by the
+  // previous setActive) and restart. Escape hatch for a config that bricks the
+  // kernel on boot/restart — a single bad subscription must not lock users out
+  // (#2109). 404 when no backup exists.
+  router.post(
+    `${PREFIX}/kernel/rollback`,
+    defineEventHandler(async (event) => {
+      const restored = await profiles.rollback()
+      if (!restored) {
+        setResponseStatus(event, 404)
+        return { error: 'no backup config to roll back to' }
+      }
+      return supervisor.restart()
+    }),
+  )
+  // Reset the active config to a minimal (header-only) file, drop activeId, and
+  // restart on mihomo defaults. Last-resort recovery when even the backup is bad
+  // — the dashboard reconnects and the user can re-import a profile (#2109).
+  router.post(
+    `${PREFIX}/kernel/recover`,
+    defineEventHandler(async () => {
+      await profiles.resetActive()
+      return supervisor.restart()
+    }),
+  )
 
   // ---- Kernel logs (SSE) ----
   router.get(
@@ -151,10 +204,57 @@ export function createControlRouter(deps: ControlRouterDeps): App {
     }),
   )
 
+  // Validate a freshly composed active config BEFORE restarting, so an invalid
+  // candidate cannot replace the running config and brick the kernel across
+  // restarts (#2109). On failure, restore the prior state (previous active id,
+  // or the last-known-good .bak snapshot written by setActive when there was no
+  // prior active profile) and surface the validator's message as a clean 400.
+  async function safeActivate(id: string): Promise<KernelState> {
+    const previousActiveId = await profiles.getActiveId()
+    try {
+      await profiles.setActive(id)
+    } catch (error) {
+      if (error instanceof ConfigPatchConflictError) {
+        throw createError({
+          statusCode: 409,
+          statusMessage: 'profile editor conflict',
+          data: { error: error.message, conflicts: error.conflicts },
+        })
+      }
+      throw error
+    }
+    const validation = await supervisor.validate(activeConfigPath)
+    if (validation.valid) return supervisor.restart()
+    if (previousActiveId && previousActiveId !== id) {
+      // Re-compose the previously-active profile (best-effort — a failure here
+      // must not mask the original validation error).
+      await profiles.setActive(previousActiveId).catch(() => {})
+    } else {
+      // No prior profile to fall back to (first activation) or re-activating the
+      // same id: restore the pre-activation file from the .bak snapshot.
+      await profiles.rollback().catch(() => {})
+    }
+    throw createError({
+      statusCode: 400,
+      statusMessage: 'profile validation failed',
+      data: { error: validation.message },
+    })
+  }
+
   // ---- Profiles ----
+  // Attach an `active` flag to each entry so the UI can persistently mark the
+  // currently-active base profile (the store tracks activeId in state.json but
+  // the raw list never exposed it, so the badge vanished after every reload
+  // (#2148)). Derived here — never persisted into index.json.
   router.get(
     `${PREFIX}/profiles`,
-    defineEventHandler(() => profiles.list()),
+    defineEventHandler(async () => {
+      const [list, activeId] = await Promise.all([
+        profiles.list(),
+        profiles.getActiveId(),
+      ])
+      return list.map((p) => ({ ...p, active: p.id === activeId }))
+    }),
   )
   router.post(
     `${PREFIX}/profiles`,
@@ -186,6 +286,15 @@ export function createControlRouter(deps: ControlRouterDeps): App {
         name?: string
         content?: string
         enabled?: boolean
+        // minutes; remote-only. 0 disables auto-update; omit leaves it untouched.
+        updateInterval?: number
+      }
+      const meta = (await profiles.list()).find((item) => item.id === id)
+      if (meta?.managedBy === 'visual-editor') {
+        throw createError({
+          statusCode: 403,
+          statusMessage: 'managed visual editor overlays are read-only',
+        })
       }
       return profiles.update(id, body)
     }),
@@ -212,22 +321,40 @@ export function createControlRouter(deps: ControlRouterDeps): App {
     `${PREFIX}/profiles/import`,
     defineEventHandler(async (event) => {
       const body = (await readBody(event)) as { url: string; name?: string }
-      return profiles.importFromUrl(body.url, body.name)
+      return withSubscriptionHttpError(() =>
+        profiles.importFromUrl(body.url, body.name),
+      )
     }),
   )
   router.post(
     `${PREFIX}/profiles/:id/refresh`,
     defineEventHandler(async (event) => {
       const id = getRouterParam(event, 'id')!
-      return profiles.refresh(id)
+      // Pure refresh: re-fetch the remote subscription in place and return the
+      // updated meta. This does NOT touch the running config — pair it with
+      // activate, or use /refresh-and-activate for a combined apply (#2108).
+      return withSubscriptionHttpError(() => profiles.refresh(id))
+    }),
+  )
+  // Combined refresh + apply: re-fetch the subscription, compose it into
+  // active.yaml, validate, and restart — the action users expect from "refresh
+  // my subscription and make it take effect" (#2108). Returns both the refreshed
+  // meta and the resulting KernelState. Kept separate from /refresh so the pure
+  // re-fetch path keeps its stable ProfileMeta response shape.
+  router.post(
+    `${PREFIX}/profiles/:id/refresh-and-activate`,
+    defineEventHandler(async (event) => {
+      const id = getRouterParam(event, 'id')!
+      const meta = await withSubscriptionHttpError(() => profiles.refresh(id))
+      const kernel = await safeActivate(id)
+      return { meta, kernel }
     }),
   )
   router.post(
     `${PREFIX}/profiles/:id/activate`,
     defineEventHandler(async (event) => {
       const id = getRouterParam(event, 'id')!
-      await profiles.setActive(id)
-      return supervisor.restart()
+      return safeActivate(id)
     }),
   )
   router.post(
@@ -246,6 +373,79 @@ export function createControlRouter(deps: ControlRouterDeps): App {
       }
     }),
   )
+
+  // ---- Visual profile editor (Agent only) ----
+  if (profileEditor) {
+    const readEditorPatch = async (event: H3Event): Promise<ConfigPatchV1> => {
+      const body = (await readBody(event)) as { patch?: ConfigPatchV1 }
+      if (body.patch?.version !== 1 || !Array.isArray(body.patch.operations)) {
+        throw createError({
+          statusCode: 400,
+          statusMessage: 'invalid visual editor patch',
+        })
+      }
+      return body.patch
+    }
+    const withEditorError = async <T>(action: () => Promise<T>): Promise<T> => {
+      try {
+        return await action()
+      } catch (error) {
+        if (error instanceof ProfileEditorConflictError) {
+          throw createError({
+            statusCode: 409,
+            statusMessage: 'profile editor conflict',
+            data: { error: error.message, conflicts: error.conflicts },
+          })
+        }
+        if (error instanceof ProfileEditorValidationError) {
+          throw createError({
+            statusCode: 400,
+            statusMessage: 'profile editor validation failed',
+            data: {
+              error: error.message,
+              diagnostics: error.diagnostics,
+              validatorMessage: error.validatorMessage,
+            },
+          })
+        }
+        throw error
+      }
+    }
+
+    router.get(
+      `${PREFIX}/profiles/:id/editor`,
+      defineEventHandler((event) => {
+        const id = getRouterParam(event, 'id')!
+        return withEditorError(() => profileEditor.open(id))
+      }),
+    )
+    router.post(
+      `${PREFIX}/profiles/:id/editor/preview`,
+      defineEventHandler(async (event) => {
+        const id = getRouterParam(event, 'id')!
+        const patch = await readEditorPatch(event)
+        return withEditorError(() => profileEditor.preview(id, patch))
+      }),
+    )
+    router.put(
+      `${PREFIX}/profiles/:id/editor`,
+      defineEventHandler(async (event) => {
+        const id = getRouterParam(event, 'id')!
+        const patch = await readEditorPatch(event)
+        return withEditorError(() => profileEditor.apply(id, patch))
+      }),
+    )
+    router.delete(
+      `${PREFIX}/profiles/:id/editor/overlay`,
+      defineEventHandler(async (event) => {
+        const id = getRouterParam(event, 'id')!
+        const kernel = await withEditorError(() =>
+          profileEditor.resetManagedOverlay(id),
+        )
+        return kernel ?? { ok: true }
+      }),
+    )
+  }
 
   // ---- Active config ----
   router.get(
@@ -340,9 +540,10 @@ export function createControlRouter(deps: ControlRouterDeps): App {
 
   // ---- WebDAV backup / restore (always available — credentials per-request) ----
   function backupPath(dir?: string): string {
-    return dir
-      ? `${dir.replace(/\/+$/, '')}/${BACKUP_FILENAME}`
-      : BACKUP_FILENAME
+    if (!dir) return BACKUP_FILENAME
+    let end = dir.length
+    while (end > 0 && dir[end - 1] === '/') end--
+    return `${dir.slice(0, end)}/${BACKUP_FILENAME}`
   }
 
   router.post(
@@ -398,7 +599,14 @@ export function createControlRouter(deps: ControlRouterDeps): App {
       const bundle = JSON.parse(raw) as {
         version: number
         profiles: Array<{
-          meta: { name: string; type?: string }
+          meta: {
+            id?: string
+            name: string
+            type?: string
+            baseProfileId?: string
+            managedBy?: 'visual-editor'
+            editorStatus?: 'clean' | 'conflicted'
+          }
           content: string
         }>
         uiSettings?: unknown
@@ -406,7 +614,14 @@ export function createControlRouter(deps: ControlRouterDeps): App {
       // Recreate via profiles.create so each restored profile gets a fresh id
       // (avoids clashing with any existing local ids).
       let restored = 0
-      for (const p of bundle.profiles ?? []) {
+      const restoredIds = new Map<string, string>()
+      const ordinary = (bundle.profiles ?? []).filter(
+        (profile) => profile.meta.managedBy !== 'visual-editor',
+      )
+      const managed = (bundle.profiles ?? []).filter(
+        (profile) => profile.meta.managedBy === 'visual-editor',
+      )
+      for (const p of [...ordinary, ...managed]) {
         // Preserve composition types (merge/script) so restored overlays/scripts
         // still apply; 'remote' is intentionally restored as 'local' (keep the
         // captured content, no network re-fetch).
@@ -414,7 +629,18 @@ export function createControlRouter(deps: ControlRouterDeps): App {
           p.meta.type === 'merge' || p.meta.type === 'script'
             ? p.meta.type
             : 'local'
-        await profiles.create({ name: p.meta.name, content: p.content, type })
+        const mappedBaseId = p.meta.baseProfileId
+          ? restoredIds.get(p.meta.baseProfileId)
+          : undefined
+        const created = await profiles.create({
+          name: p.meta.name,
+          content: p.content,
+          type,
+          ...(mappedBaseId ? { baseProfileId: mappedBaseId } : {}),
+          ...(p.meta.managedBy ? { managedBy: p.meta.managedBy } : {}),
+          ...(p.meta.editorStatus ? { editorStatus: p.meta.editorStatus } : {}),
+        })
+        if (p.meta.id) restoredIds.set(p.meta.id, created.id)
         restored += 1
       }
       return { ok: true, restored, uiSettings: bundle.uiSettings }
@@ -439,6 +665,12 @@ export function createControlRouter(deps: ControlRouterDeps): App {
           // 'fixed' (default) = manual host:port proxy; 'pac' = auto-config URL.
           mode?: 'fixed' | 'pac'
           pacUrl?: string
+        }
+        // Record an explicitly applied bypass list as the new default FIRST, so
+        // it sticks even when this apply lands while the proxy is off (the
+        // disable() branch takes no list — without this the edit evaporated).
+        if (body.bypass && body.bypass.length > 0) {
+          systemProxy.setDefaultBypass?.(body.bypass)
         }
         if (body.mode === 'pac') {
           if (body.enabled) {

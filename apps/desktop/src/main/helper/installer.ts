@@ -1,3 +1,6 @@
+import { Buffer } from 'node:buffer'
+import { posix, win32 } from 'node:path'
+
 /**
  * Per-OS privileged-helper install / uninstall — COMMAND GENERATION ONLY (spec
  * §12.4). This module composes the privileged service definition that runs the
@@ -24,8 +27,9 @@ export type ExecFn = (
 /**
  * Injected elevation runner: takes a single shell script and runs it with
  * administrator privileges (ONE prompt). Real impl: mac `osascript ... with
- * administrator privileges`, linux `pkexec`, win UAC `runas`. Tests record the
- * script and never prompt.
+ * administrator privileges`, linux `pkexec`, win UAC `Start-Process -Verb
+ * RunAs` (see `helper/elevate.ts`). Tests record the script and never prompt.
+ * The script itself is NOT privileged — elevate must wrap it.
  */
 export type ElevateFn = (
   script: string,
@@ -93,6 +97,13 @@ function systemdUnitPath(serviceName: string): string {
   return `/etc/systemd/system/${serviceName}.service`
 }
 
+function xml(value: string): string {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+}
+
 /**
  * Compose the LaunchDaemon plist body: run the bundled Electron as Node against
  * the helper entry, with the env the helper reads (socket + secret), kept alive
@@ -112,20 +123,20 @@ function buildLaunchDaemonPlist(
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>${label}</string>
+  <string>${xml(label)}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>${opts.electronBin}</string>
-    <string>${opts.helperEntry}</string>
+    <string>${xml(opts.electronBin)}</string>
+    <string>${xml(opts.helperEntry)}</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
     <key>ELECTRON_RUN_AS_NODE</key>
     <string>1</string>
     <key>MCXD_HELPER_SOCKET</key>
-    <string>${opts.socketPath}</string>
+    <string>${xml(opts.socketPath)}</string>
     <key>MCXD_HELPER_SECRET_FILE</key>
-    <string>${secretPath}</string>
+    <string>${xml(secretPath)}</string>
   </dict>
   <key>RunAtLoad</key>
   <true/>
@@ -151,12 +162,12 @@ Description=metacubexd privileged TUN helper
 After=network.target
 
 [Service]
-Type=simple
+Type=exec
 User=root
 Environment=ELECTRON_RUN_AS_NODE=1
-Environment=MCXD_HELPER_SOCKET=${opts.socketPath}
-Environment=MCXD_HELPER_SECRET_FILE=${secretPath}
-ExecStart=${opts.electronBin} ${opts.helperEntry}
+Environment=${systemdQuote(`MCXD_HELPER_SOCKET=${opts.socketPath}`)}
+Environment=${systemdQuote(`MCXD_HELPER_SECRET_FILE=${secretPath}`)}
+ExecStart=${systemdQuote(opts.electronBin)} ${systemdQuote(opts.helperEntry, true)}
 Restart=on-failure
 
 [Install]
@@ -168,7 +179,91 @@ WantedBy=multi-user.target`
  * Wrap in single quotes and escape embedded single quotes the standard way.
  */
 function shQuote(value: string): string {
-  return `'${value.replace(/'/g, `'\\''`)}'`
+  return `'${value.replaceAll("'", `'\\''`)}'`
+}
+
+/** systemd has its own quoting, specifier and (ExecStart only) env expansion. */
+function systemdQuote(value: string, command = false): string {
+  const escaped = value
+    .replaceAll('\\', '\\\\')
+    .replaceAll('"', '\\"')
+    .replaceAll('\n', '\\n')
+    .replaceAll('\r', '\\r')
+    .replaceAll('%', '%%')
+  return `"${command ? escaped.replaceAll('$', () => '$$') : escaped}"`
+}
+
+function psQuote(value: string): string {
+  return `'${value.replaceAll("'", "''")}'`
+}
+
+/** A real SCM entry point: Electron/Node alone cannot be an sc.exe service. */
+export function windowsServiceSource(
+  serviceName: string,
+  opts: HelperInstallOptions,
+  secretPath: string,
+): string {
+  const literal = (value: string) => `@"${value.replaceAll('"', '""')}"`
+  return `using System;
+using System.Diagnostics;
+using System.IO;
+using System.ServiceProcess;
+
+internal sealed class HelperService : ServiceBase
+{
+    private Process helper;
+    private volatile bool stopping;
+
+    private HelperService()
+    {
+        ServiceName = ${literal(serviceName)};
+        CanStop = true;
+        CanShutdown = true;
+    }
+
+    protected override void OnStart(string[] args)
+    {
+        stopping = false;
+        ProcessStartInfo start = new ProcessStartInfo();
+        start.FileName = ${literal(opts.electronBin)};
+        start.Arguments = "\\\"" + ${literal(opts.helperEntry)} + "\\\"";
+        start.WorkingDirectory = Path.GetDirectoryName(start.FileName);
+        start.UseShellExecute = false;
+        start.CreateNoWindow = true;
+        start.EnvironmentVariables["ELECTRON_RUN_AS_NODE"] = "1";
+        start.EnvironmentVariables["MCXD_HELPER_SOCKET"] = ${literal(opts.socketPath)};
+        start.EnvironmentVariables["MCXD_HELPER_SECRET_FILE"] = ${literal(secretPath)};
+        helper = new Process();
+        helper.StartInfo = start;
+        helper.EnableRaisingEvents = true;
+        helper.Exited += delegate { if (!stopping) Environment.Exit(1); };
+        helper.Start();
+    }
+
+    protected override void OnStop()
+    {
+        stopping = true;
+        if (helper == null || helper.HasExited) return;
+        // Terminate the whole helper/mihomo tree on SCM stop or OS shutdown.
+        ProcessStartInfo stop = new ProcessStartInfo();
+        stop.FileName = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "taskkill.exe");
+        stop.Arguments = "/PID " + helper.Id + " /T /F";
+        stop.UseShellExecute = false;
+        stop.CreateNoWindow = true;
+        using (Process kill = Process.Start(stop))
+        {
+            if (!kill.WaitForExit(10000)) kill.Kill();
+        }
+        if (!helper.HasExited) helper.Kill();
+        helper.WaitForExit(5000);
+        helper.Dispose();
+        helper = null;
+    }
+
+    protected override void OnShutdown() { OnStop(); }
+
+    private static void Main() { ServiceBase.Run(new HelperService()); }
+}`
 }
 
 /**
@@ -194,33 +289,48 @@ export function createHelperInstaller(
     // helper reads it as root; no other local user may read it), write the
     // plist, then bootstrap the daemon into the system domain.
     return [
-      `mkdir -p $(dirname ${shQuote(secretPath)})`,
+      'set -eu',
+      `mkdir -p -- ${shQuote(posix.dirname(secretPath))}`,
       // Create the secret already-restricted: under `umask 077` the redirection
       // makes the file 0600 from the first byte, so the secret is NEVER briefly
       // world-readable between the write and the chmod (the chmod below stays as
       // an explicit belt-and-braces guarantee).
-      `(umask 077; printf '%s' ${shQuote(o.secret)} > ${secretPath})`,
-      `chown root: ${secretPath}`,
-      `chmod 0600 ${secretPath}`,
-      `cat > ${plistPath} <<'MCXD_PLIST_EOF'\n${plist}\nMCXD_PLIST_EOF`,
-      `chown root:wheel ${plistPath}`,
-      `chmod 0644 ${plistPath}`,
-      `launchctl bootstrap system ${plistPath}`,
+      `(umask 077; printf '%s' ${shQuote(o.secret)} > ${shQuote(secretPath)})`,
+      `chown root: ${shQuote(secretPath)}`,
+      `chmod 0600 ${shQuote(secretPath)}`,
+      `cat > ${shQuote(plistPath)} <<'MCXD_PLIST_EOF'\n${plist}\nMCXD_PLIST_EOF`,
+      `chown root:wheel ${shQuote(plistPath)}`,
+      `chmod 0644 ${shQuote(plistPath)}`,
+      `launchctl bootout system/${label} 2>/dev/null || true`,
+      `launchctl bootstrap system ${shQuote(plistPath)}`,
     ].join('\n')
   }
 
   function darwinUninstallScript(): string {
     const plistPath = launchDaemonPlistPath(label)
     return [
-      `launchctl bootout system ${plistPath} || true`,
-      `rm -f ${plistPath}`,
-      `rm -f ${secretPath}`,
+      'set -eu',
+      `launchctl bootout system ${shQuote(plistPath)} || true`,
+      `rm -f -- ${shQuote(plistPath)}`,
+      `rm -f -- ${shQuote(secretPath)}`,
     ].join('\n')
   }
 
   async function darwinIsInstalled(): Promise<boolean> {
-    const { stdout } = await exec(`launchctl print system/${label}`)
-    return stdout.includes(label)
+    try {
+      const { stdout } = await exec(`launchctl print system/${label}`)
+      return stdout.includes(label)
+    } catch (err) {
+      if (
+        typeof err === 'object' &&
+        err !== null &&
+        'code' in err &&
+        err.code === 113 // service not found in the requested domain
+      ) {
+        return false
+      }
+      throw err
+    }
   }
 
   // ---- Linux (systemd + pkexec) ----
@@ -229,75 +339,165 @@ export function createHelperInstaller(
     const unitPath = systemdUnitPath(serviceName)
     const unit = buildSystemdUnit(o, secretPath)
     return [
-      `mkdir -p $(dirname ${shQuote(secretPath)})`,
+      'set -eu',
+      `mkdir -p -- ${shQuote(posix.dirname(secretPath))}`,
       // umask 077 -> the file is 0600 from the first byte, so the secret is never
       // briefly world-readable between write and chmod (chmod stays explicit).
-      `(umask 077; printf '%s' ${shQuote(o.secret)} > ${secretPath})`,
-      `chown root: ${secretPath}`,
+      `(umask 077; printf '%s' ${shQuote(o.secret)} > ${shQuote(secretPath)})`,
+      `chown root: ${shQuote(secretPath)}`,
       // 0600: root-only. The helper reads it as root; the world-readable unit
       // file carries only the PATH, never the secret value.
-      `chmod 0600 ${secretPath}`,
-      `cat > ${unitPath} <<'MCXD_UNIT_EOF'\n${unit}\nMCXD_UNIT_EOF`,
-      `chmod 0644 ${unitPath}`,
+      `chmod 0600 ${shQuote(secretPath)}`,
+      `cat > ${shQuote(unitPath)} <<'MCXD_UNIT_EOF'\n${unit}\nMCXD_UNIT_EOF`,
+      `chmod 0644 ${shQuote(unitPath)}`,
       `systemctl daemon-reload`,
-      `systemctl enable --now ${serviceName}`,
+      `systemctl enable ${shQuote(serviceName)}`,
+      // An installed helper can be stale or dead; --now does not restart an
+      // already running service after replacing its secret or command.
+      `systemctl restart ${shQuote(serviceName)}`,
     ].join('\n')
   }
 
   function linuxUninstallScript(): string {
     const unitPath = systemdUnitPath(serviceName)
     return [
-      `systemctl disable --now ${serviceName} || true`,
-      `rm -f ${unitPath}`,
+      'set -eu',
+      `systemctl disable --now ${shQuote(serviceName)} || true`,
+      `rm -f -- ${shQuote(unitPath)}`,
       `systemctl daemon-reload`,
-      `rm -f ${secretPath}`,
+      `rm -f -- ${shQuote(secretPath)}`,
     ].join('\n')
   }
 
   async function linuxIsInstalled(): Promise<boolean> {
-    const { stdout } = await exec(`systemctl is-enabled ${serviceName}`)
-    return /\benabled\b/.test(stdout)
+    try {
+      const { stdout } = await exec(
+        `systemctl is-enabled ${shQuote(serviceName)}`,
+      )
+      return stdout
+        .split('\n')
+        .some((line) => line.trim().toLowerCase() === 'enabled')
+    } catch (err) {
+      if (
+        typeof err === 'object' &&
+        err !== null &&
+        'code' in err &&
+        (err.code === 1 || err.code === 4) // disabled/failed or not-found
+      ) {
+        return false
+      }
+      throw err
+    }
   }
 
-  // ---- Windows (sc + UAC runas) ----
-  // NOTE: the named pipe is secured by an ACL granting the app's user read/write
-  // and denying everyone else; the ACL is applied on the pipe at create time by
-  // the helper (server-side), the service definition below only registers the
-  // auto-start service + its env. The Windows branch is logic-only here.
+  // ---- Windows (ServiceBase host + UAC runas) ----
+  // The helper's pipe accepts local app connections; its per-install secret
+  // authenticates requests. The host and its secret live in a dedicated
+  // ProgramData directory restricted to SYSTEM and administrators.
 
   function winInstallScript(o: HelperInstallOptions): string {
-    // sc create the auto-start service (runs as LocalSystem). Deliver its env via
-    // the PER-SERVICE registry key (visible only to the service + admins) — NOT a
-    // machine-wide `setx /M`, which was readable by every user AND set the wrong
-    // variable name (MCXD_HELPER_ENV), so the service never actually received its
-    // env. The secret lives ONLY in a SYSTEM-only ACL'd file; the registry env
-    // carries the file PATH (MCXD_HELPER_SECRET_FILE), never the secret value.
-    const serviceKey = `HKLM\\SYSTEM\\CurrentControlSet\\Services\\${serviceName}`
-    const envMultiSz = [
-      'ELECTRON_RUN_AS_NODE=1',
-      `MCXD_HELPER_SOCKET=${o.socketPath}`,
-      `MCXD_HELPER_SECRET_FILE=${secretPath}`,
-    ].join('\\0') // REG_MULTI_SZ separator for reg.exe
+    const serviceDir = win32.dirname(secretPath)
+    const serviceExe = win32.join(serviceDir, 'helper-service.exe')
+    const sourceFile = win32.join(serviceDir, 'helper-service.cs')
+    const source = Buffer.from(
+      windowsServiceSource(serviceName, o, secretPath),
+      'utf8',
+    ).toString('base64')
     return [
-      `sc create ${serviceName} binPath= "${o.electronBin} ${o.helperEntry}" start= auto`,
-      `reg add "${serviceKey}" /v Environment /t REG_MULTI_SZ /d "${envMultiSz}" /f`,
-      `(echo ${o.secret})> "${secretPath}"`,
-      `icacls "${secretPath}" /inheritance:r /grant:r "SYSTEM:(R)" "Administrators:(R)"`,
-      `sc start ${serviceName}`,
+      "$ErrorActionPreference = 'Stop'",
+      `$serviceName = ${psQuote(serviceName)}`,
+      `$serviceDir = ${psQuote(serviceDir)}`,
+      `$serviceExe = ${psQuote(serviceExe)}`,
+      `$sourceFile = ${psQuote(sourceFile)}`,
+      // Create the directory with restricted ACLs BEFORE writing source/secret.
+      'New-Item -ItemType Directory -Path $serviceDir -Force | Out-Null',
+      '$acl = New-Object System.Security.AccessControl.DirectorySecurity',
+      '$acl.SetAccessRuleProtection($true, $false)',
+      "foreach ($sid in @('S-1-5-18', 'S-1-5-32-544')) {",
+      '  $identity = New-Object System.Security.Principal.SecurityIdentifier($sid)',
+      "  $rule = New-Object System.Security.AccessControl.FileSystemAccessRule($identity, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow')",
+      '  $acl.AddAccessRule($rule)',
+      '}',
+      'Set-Acl -LiteralPath $serviceDir -AclObject $acl',
+      '$existing = Get-Service -Name $serviceName -ErrorAction SilentlyContinue',
+      'if ($existing) {',
+      "  if ($existing.Status -ne 'Stopped') {",
+      '    Stop-Service -InputObject $existing -Force',
+      "    $existing.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(20))",
+      '  }',
+      '  $existing.Dispose()',
+      '}',
+      `[IO.File]::WriteAllText(${psQuote(secretPath)}, ${psQuote(o.secret)}, (New-Object Text.UTF8Encoding($false)))`,
+      `$source = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(${psQuote(source)}))`,
+      '[IO.File]::WriteAllText($sourceFile, $source, [Text.Encoding]::UTF8)',
+      // Windows ships the .NET Framework compiler; no downloads or npm/native
+      // dependencies are needed. Prefer the native compiler, then x86 fallback.
+      "$compiler = @('Framework64', 'Framework') | ForEach-Object { Join-Path $env:SystemRoot ('Microsoft.NET\\' + $_ + '\\v4.0.30319\\csc.exe') } | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1",
+      "if (!$compiler) { throw 'The .NET Framework v4 compiler required by the TUN helper was not found.' }",
+      '$assembly = Join-Path (Split-Path -Parent $compiler) System.ServiceProcess.dll',
+      '& $compiler /nologo /target:winexe ("/reference:$assembly") ("/out:$serviceExe") $sourceFile',
+      "if ($LASTEXITCODE -ne 0) { throw 'Failed to compile the Windows TUN service host.' }",
+      `$binaryPath = '"' + $serviceExe + '"'`,
+      'if ($existing) {',
+      `  $service = Get-CimInstance -ClassName Win32_Service -Filter ${psQuote(`Name='${serviceName}'`)}`,
+      "  $result = Invoke-CimMethod -InputObject $service -MethodName Change -Arguments @{ PathName = $binaryPath; StartMode = 'Automatic'; StartName = 'LocalSystem' }",
+      "  if ($result.ReturnValue -ne 0) { throw ('Failed to update TUN service: ' + $result.ReturnValue) }",
+      '} else {',
+      '  New-Service -Name $serviceName -BinaryPathName $binaryPath -StartupType Automatic | Out-Null',
+      '}',
+      // Earlier releases registered Electron directly and injected an env block
+      // through SCM. The service host now supplies its child's environment.
+      `Remove-ItemProperty -LiteralPath ${psQuote(`HKLM:\\SYSTEM\\CurrentControlSet\\Services\\${serviceName}`)} -Name Environment -ErrorAction SilentlyContinue`,
+      'Start-Service -Name $serviceName',
+      '$started = Get-Service -Name $serviceName',
+      "$started.WaitForStatus('Running', [TimeSpan]::FromSeconds(20))",
+      '$started.Dispose()',
     ].join('\r\n')
   }
 
   function winUninstallScript(): string {
     return [
-      `sc stop ${serviceName}`,
-      `sc delete ${serviceName}`,
-      `del /f /q "${secretPath}"`,
+      "$ErrorActionPreference = 'Stop'",
+      `$serviceName = ${psQuote(serviceName)}`,
+      '$service = Get-Service -Name $serviceName -ErrorAction SilentlyContinue',
+      'if ($service) {',
+      "  if ($service.Status -ne 'Stopped') {",
+      '    Stop-Service -InputObject $service -Force',
+      "    $service.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(20))",
+      '  }',
+      '  $service.Dispose()',
+      "  & (Join-Path $env:SystemRoot 'System32\\sc.exe') delete $serviceName",
+      "  if ($LASTEXITCODE -ne 0) { throw 'Failed to remove the TUN service.' }",
+      '}',
+      ...[
+        secretPath,
+        win32.join(win32.dirname(secretPath), 'helper-service.exe'),
+        win32.join(win32.dirname(secretPath), 'helper-service.cs'),
+      ].map(
+        (path) =>
+          `if (Test-Path -LiteralPath ${psQuote(path)}) { Remove-Item -LiteralPath ${psQuote(path)} -Force }`,
+      ),
     ].join('\r\n')
   }
 
   async function winIsInstalled(): Promise<boolean> {
-    const { stdout } = await exec(`sc query ${serviceName}`)
-    return stdout.includes(serviceName) && !/FAILED\s+1060/i.test(stdout)
+    try {
+      const root = process.env.SystemRoot || process.env.WINDIR || 'C:\\Windows'
+      const { stdout } = await exec(
+        `"${root}\\System32\\sc.exe" query ${serviceName}`,
+      )
+      return stdout.includes(serviceName) && !stdout.includes('1060')
+    } catch (err) {
+      if (
+        typeof err === 'object' &&
+        err !== null &&
+        'code' in err &&
+        err.code === 1060 // ERROR_SERVICE_DOES_NOT_EXIST
+      ) {
+        return false
+      }
+      throw err
+    }
   }
 
   return {

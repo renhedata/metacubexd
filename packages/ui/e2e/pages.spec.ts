@@ -271,6 +271,232 @@ describe('e2E Page Tests', () => {
         currentPage.getByRole('button', { name: 'Test All' }).isVisible(),
       ).resolves.toBe(true)
     })
+
+    it('should jump to the selected proxy on desktop', async () => {
+      const currentPage = await gotoAppPath(page, '/proxies')
+      const jumpButton = currentPage.locator(
+        'button[data-testid="jump-to-current"][data-proxy-group="Auto Select"]',
+      )
+      const selectedProxy = currentPage.locator(
+        '[data-proxy-group="Auto Select"][data-selected="true"]',
+      )
+
+      await expect
+        .poll(() => jumpButton.isVisible(), { timeout: ELEMENT_TIMEOUT })
+        .toBe(true)
+      const wasExpanded = (await selectedProxy.count()) > 0
+
+      await currentPage.evaluate(() => {
+        const testWindow = window as unknown as Record<string, unknown>
+        testWindow.originalScrollIntoView = Element.prototype.scrollIntoView
+        Element.prototype.scrollIntoView = function () {
+          testWindow.scrolledProxyGroup = (
+            this as HTMLElement
+          ).dataset.proxyGroup
+        }
+      })
+
+      try {
+        await jumpButton.click()
+        await expect
+          .poll(() =>
+            currentPage.evaluate(
+              () =>
+                (window as unknown as Record<string, unknown>)
+                  .scrolledProxyGroup,
+            ),
+          )
+          .toBe('Auto Select')
+        await expect(selectedProxy.isVisible()).resolves.toBe(true)
+      } finally {
+        await currentPage.evaluate(() => {
+          const testWindow = window as unknown as Record<string, unknown>
+          Element.prototype.scrollIntoView =
+            testWindow.originalScrollIntoView as typeof Element.prototype.scrollIntoView
+          delete testWindow.originalScrollIntoView
+          delete testWindow.scrolledProxyGroup
+        })
+        if (!wasExpanded) {
+          await jumpButton.evaluate((button) => {
+            const groupHeader = button.closest(
+              '.cursor-pointer',
+            ) as HTMLElement | null
+            groupHeader?.click()
+          })
+        }
+      }
+    })
+
+    it('should scroll the master-detail pane to top on desktop', async () => {
+      const currentPage = await gotoAppPath(page, '/proxies')
+      await currentPage.setViewportSize({ width: 1024, height: 600 })
+
+      try {
+        await currentPage.getByTitle('Master-detail').click()
+        const detailScrollContainer = currentPage.getByTestId(
+          'master-detail-scroll-container',
+        )
+        const detailHeader = currentPage.getByTestId('master-detail-header')
+        await expect(
+          detailHeader.locator('input[type="search"]').count(),
+        ).resolves.toBe(0)
+        const headerTopBeforeScroll = await detailHeader.evaluate(
+          (element) => element.getBoundingClientRect().top,
+        )
+
+        await detailScrollContainer.evaluate((element) => {
+          const spacer = document.createElement('div')
+          spacer.style.flex = '0 0 600px'
+          spacer.setAttribute('aria-hidden', 'true')
+          element.append(spacer)
+          element.scrollTop = 320
+          element.dispatchEvent(new Event('scroll'))
+        })
+        await expect(
+          detailHeader.evaluate(
+            (element) => element.getBoundingClientRect().top,
+          ),
+        ).resolves.toBe(headerTopBeforeScroll)
+
+        const scrollToTopButton = currentPage.getByTestId('scroll-to-top')
+        await expect
+          .poll(() => scrollToTopButton.isVisible(), {
+            timeout: ELEMENT_TIMEOUT,
+          })
+          .toBe(true)
+
+        await currentPage.emulateMedia({ reducedMotion: 'reduce' })
+        await scrollToTopButton.click()
+        await expect(
+          detailScrollContainer.evaluate((element) => element.scrollTop),
+        ).resolves.toBe(0)
+      } finally {
+        await currentPage.emulateMedia({ reducedMotion: 'no-preference' })
+        await currentPage.getByTitle('Card').click()
+        await currentPage
+          .getByTestId('proxies-scroll-container')
+          .evaluate((element) => {
+            element.scrollTop = 0
+            element.dispatchEvent(new Event('scroll'))
+          })
+        await currentPage.setViewportSize({ width: 1920, height: 1080 })
+      }
+    })
+
+    it('should scroll the active proxy tab to top on mobile', async () => {
+      const currentPage = getPage(page)
+      await currentPage.setViewportSize({ width: 390, height: 844 })
+
+      try {
+        await gotoAppPath(currentPage, '/proxies')
+
+        const proxyScrollContainer = currentPage.getByTestId(
+          'proxies-scroll-container',
+        )
+        await currentPage.getByTitle('Expand All').click()
+        await expect
+          .poll(
+            () =>
+              proxyScrollContainer.evaluate(
+                (el) => el.scrollHeight - el.clientHeight,
+              ),
+            { timeout: ELEMENT_TIMEOUT },
+          )
+          .toBeGreaterThan(360)
+
+        await proxyScrollContainer.evaluate((el) => {
+          el.scrollTop = 0
+          el.dispatchEvent(new Event('scroll'))
+        })
+        await expect
+          .poll(() => currentPage.getByTestId('scroll-to-top').count(), {
+            timeout: ELEMENT_TIMEOUT,
+          })
+          .toBe(0)
+        await proxyScrollContainer.evaluate((el) => {
+          el.scrollTop = 360
+          el.dispatchEvent(new Event('scroll'))
+        })
+
+        const scrollToTopButton = currentPage.getByTestId('scroll-to-top')
+        await expect
+          .poll(() => scrollToTopButton.isVisible(), {
+            timeout: ELEMENT_TIMEOUT,
+          })
+          .toBe(true)
+
+        // Reduced-motion users should jump immediately instead of animating.
+        await currentPage.emulateMedia({ reducedMotion: 'reduce' })
+        await scrollToTopButton.click()
+        await expect(
+          proxyScrollContainer.evaluate((el) => el.scrollTop),
+        ).resolves.toBe(0)
+        await currentPage.emulateMedia({ reducedMotion: 'no-preference' })
+
+        // The providers tab owns a separate scroll container. Re-selecting the
+        // active Proxies item in the mobile nav should scroll that container.
+        await currentPage
+          .locator('button')
+          .filter({ hasText: 'Proxy Providers' })
+          .click()
+        await currentPage.getByText('Provider A', { exact: true }).click()
+        await currentPage.getByText('Provider B', { exact: true }).click()
+
+        const providerScrollContainer = currentPage.getByTestId(
+          'providers-scroll-container',
+        )
+        await expect
+          .poll(
+            () =>
+              providerScrollContainer.evaluate(
+                (el) => el.scrollHeight - el.clientHeight,
+              ),
+            { timeout: ELEMENT_TIMEOUT },
+          )
+          .toBeGreaterThan(320)
+        await providerScrollContainer.evaluate((el) => {
+          el.scrollTop = 320
+          el.dispatchEvent(new Event('scroll'))
+        })
+
+        const mobileNav = currentPage.getByRole('navigation', {
+          name: 'Mobile bottom navigation',
+        })
+        await mobileNav.locator('a[href="#/proxies"]').click()
+        await expect
+          .poll(() => providerScrollContainer.evaluate((el) => el.scrollTop), {
+            timeout: ELEMENT_TIMEOUT,
+          })
+          .toBe(0)
+
+        // The floating control remains available after switching to desktop.
+        await providerScrollContainer.evaluate((el) => {
+          el.scrollTop = 320
+          el.dispatchEvent(new Event('scroll'))
+        })
+        await expect
+          .poll(() => scrollToTopButton.isVisible(), {
+            timeout: ELEMENT_TIMEOUT,
+          })
+          .toBe(true)
+        await currentPage.setViewportSize({ width: 1024, height: 844 })
+        await expect(scrollToTopButton.isVisible()).resolves.toBe(true)
+        await scrollToTopButton.click()
+        await expect
+          .poll(() => providerScrollContainer.evaluate((el) => el.scrollTop), {
+            timeout: ELEMENT_TIMEOUT,
+          })
+          .toBe(0)
+
+        // Inactive bottom-nav items preserve their normal navigation behavior.
+        await currentPage.setViewportSize({ width: 390, height: 844 })
+        await mobileNav.locator('a[href="#/overview"]').click()
+        await expectHashPath(currentPage, '/overview')
+      } finally {
+        await currentPage.emulateMedia({ reducedMotion: 'no-preference' })
+        await currentPage.setViewportSize({ width: 1920, height: 1080 })
+      }
+    })
   })
 
   describe('connections Page', () => {
@@ -462,20 +688,125 @@ describe('e2E Page Tests', () => {
   })
 
   describe('mobile Viewport', () => {
-    it('should render correctly on mobile viewport', async () => {
-      const currentPage = getPage(page)
-      await currentPage.setViewportSize({ width: 390, height: 844 })
-      await gotoAppPath(currentPage, '/overview')
+    async function configureMobileLayout(
+      currentPage: Page,
+      useMobileBottomNav: boolean,
+      height: number,
+    ) {
+      await currentPage.setViewportSize({ width: 390, height })
+      await currentPage.evaluate((enabled) => {
+        localStorage.setItem('useMobileBottomNav', String(enabled))
+      }, useMobileBottomNav)
+      await currentPage.reload({ waitUntil: 'domcontentloaded' })
+      await currentPage.waitForLoadState('networkidle')
+    }
 
-      // Check that page still renders - look for main content (stat cards or rounded elements)
-      await currentPage.waitForSelector('.overview-stat-card', {
-        timeout: ELEMENT_TIMEOUT,
+    async function restoreDesktopLayout(currentPage: Page) {
+      await currentPage.evaluate(() => {
+        localStorage.setItem('useMobileBottomNav', 'true')
+        document.body.style.paddingBottom = ''
       })
-      const mainContent = currentPage.locator('.overview-stat-card')
-      await expect(mainContent.count()).resolves.toBeGreaterThan(0)
-
-      // Reset viewport for other tests
       await currentPage.setViewportSize({ width: 1920, height: 1080 })
+      await currentPage.reload({ waitUntil: 'domcontentloaded' })
+    }
+
+    it('should keep the document viewport locked with either mobile navigation', async () => {
+      const currentPage = getPage(page)
+
+      try {
+        for (const useMobileBottomNav of [true, false]) {
+          await configureMobileLayout(currentPage, useMobileBottomNav, 844)
+          await gotoAppPath(currentPage, '/overview')
+          await currentPage.waitForSelector('.overview-stat-card', {
+            timeout: ELEMENT_TIMEOUT,
+          })
+
+          const viewportState = await currentPage.evaluate(() => {
+            const nuxtRoot = document.querySelector<HTMLElement>('#__nuxt')
+            if (!nuxtRoot) throw new Error('Nuxt root was not rendered')
+
+            const roots = [document.documentElement, document.body, nuxtRoot]
+            const overflowY = roots.map(
+              (element) => getComputedStyle(element).overflowY,
+            )
+            const heights = roots.map((element) => element.clientHeight)
+
+            // Recreate the kind of incidental body growth that previously let
+            // the mobile document move independently from its page scrollport.
+            document.body.style.paddingBottom = '5rem'
+            window.scrollTo(0, document.documentElement.scrollHeight)
+            const windowScrollY = window.scrollY
+            document.body.style.paddingBottom = ''
+            window.scrollTo(0, 0)
+
+            return {
+              heights,
+              overflowY,
+              viewportHeight: window.innerHeight,
+              windowScrollY,
+            }
+          })
+
+          expect(viewportState.overflowY).toEqual([
+            'hidden',
+            'hidden',
+            'hidden',
+          ])
+          expect(viewportState.heights).toEqual([
+            viewportState.viewportHeight,
+            viewportState.viewportHeight,
+            viewportState.viewportHeight,
+          ])
+          expect(viewportState.windowScrollY).toBe(0)
+        }
+      } finally {
+        await restoreDesktopLayout(currentPage)
+      }
+    })
+
+    it('should scroll page content without moving the header on a short viewport', async () => {
+      const currentPage = getPage(page)
+
+      try {
+        for (const useMobileBottomNav of [true, false]) {
+          await configureMobileLayout(currentPage, useMobileBottomNav, 500)
+          await gotoAppPath(currentPage, '/overview')
+          await currentPage.waitForSelector('.overview-stat-card', {
+            timeout: ELEMENT_TIMEOUT,
+          })
+
+          const scrollState = await currentPage.evaluate(() => {
+            const firstCard = document.querySelector('.overview-stat-card')
+            const scrollport =
+              firstCard?.closest<HTMLElement>('.overflow-y-auto')
+            const header = document.querySelector<HTMLElement>('header')
+            if (!scrollport || !header) {
+              throw new Error(
+                'Mobile header or overview scrollport was missing',
+              )
+            }
+
+            const headerTopBefore = header.getBoundingClientRect().top
+            const maxScroll = scrollport.scrollHeight - scrollport.clientHeight
+            scrollport.scrollTop = Math.min(200, maxScroll)
+
+            return {
+              headerTopAfter: header.getBoundingClientRect().top,
+              headerTopBefore,
+              maxScroll,
+              scrollTop: scrollport.scrollTop,
+              windowScrollY: window.scrollY,
+            }
+          })
+
+          expect(scrollState.maxScroll).toBeGreaterThan(0)
+          expect(scrollState.scrollTop).toBeGreaterThan(0)
+          expect(scrollState.headerTopAfter).toBe(scrollState.headerTopBefore)
+          expect(scrollState.windowScrollY).toBe(0)
+        }
+      } finally {
+        await restoreDesktopLayout(currentPage)
+      }
     })
   })
 })

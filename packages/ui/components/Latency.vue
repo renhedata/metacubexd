@@ -8,9 +8,8 @@ interface Props {
   groupName?: string
   class?: string | Record<string, boolean>
   // When true the pill is a real keyboard-operable control (own tab stop +
-  // Enter/Space). Left false for the display-only call sites (ProxyPreviewBar)
-  // and where it sits inside another button (ProxyNodeChip) to avoid a stray
-  // tab stop / nested interactive.
+  // Enter/Space). Left false for display-only call sites such as
+  // ProxyPreviewBar.
   interactive?: boolean
 }
 
@@ -83,7 +82,7 @@ const ariaLabel = computed(() => {
 <style scoped>
 .latency-pill {
   position: relative;
-  background-color: color-mix(in oklch, currentColor 12%, transparent);
+  background-color: color-mix(in oklab, currentColor 12%, transparent);
   box-shadow: var(--inner-highlight);
   transition:
     transform var(--dur-base) var(--ease-spring),
@@ -91,7 +90,7 @@ const ariaLabel = computed(() => {
 }
 .latency-pill:hover {
   transform: scale(1.06);
-  background-color: color-mix(in oklch, currentColor 18%, transparent);
+  background-color: color-mix(in oklab, currentColor 18%, transparent);
 }
 .latency-pill:active {
   transform: scale(0.92);

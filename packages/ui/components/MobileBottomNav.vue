@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type {MobileNavReselectDetail} from '~/constants';
 import {
   IconChartAreaLine,
   IconFileStack,
@@ -11,6 +12,11 @@ import {
   IconSettings,
   IconX,
 } from '@tabler/icons-vue'
+import {
+  MOBILE_NAV_RESELECT_EVENT,
+  
+  ROUTES
+} from '~/constants'
 
 const { t } = useI18n()
 const route = useRoute()
@@ -48,6 +54,17 @@ const secondaryItems = computed(() => {
 })
 
 const isActive = (href: string) => route.path === href
+
+function onPrimaryNavClick(href: string, event: MouseEvent) {
+  if (href !== ROUTES.Proxies || !isActive(href)) return
+
+  event.preventDefault()
+  window.dispatchEvent(
+    new CustomEvent<MobileNavReselectDetail>(MOBILE_NAV_RESELECT_EVENT, {
+      detail: { path: href },
+    }),
+  )
+}
 
 // FAB popup state
 const popupOpen = ref(false)
@@ -96,9 +113,9 @@ onMounted(() => {
         class="mx-auto flex w-max flex-col overflow-hidden rounded-2xl shadow-xl backdrop-blur-[16px]"
         :style="{
           border:
-            '1px solid color-mix(in oklch, var(--color-base-content) 12%, transparent)',
+            '1px solid color-mix(in oklab, var(--color-base-content) 12%, transparent)',
           background:
-            'color-mix(in oklch, var(--color-base-300) 95%, transparent)',
+            'color-mix(in oklab, var(--color-base-300) 95%, transparent)',
         }"
       >
         <NuxtLink
@@ -136,9 +153,9 @@ onMounted(() => {
       class="mx-1 mb-2 overflow-visible rounded-2xl shadow-lg backdrop-blur-[12px] sm:mx-2"
       :style="{
         border:
-          '1px solid color-mix(in oklch, var(--color-base-content) 10%, transparent)',
+          '1px solid color-mix(in oklab, var(--color-base-content) 10%, transparent)',
         background:
-          'color-mix(in oklch, var(--color-base-300) 90%, transparent)',
+          'color-mix(in oklab, var(--color-base-300) 90%, transparent)',
       }"
     >
       <div class="grid h-16 w-full grid-cols-5">
@@ -153,6 +170,7 @@ onMounted(() => {
               ? 'text-primary'
               : 'text-base-content/60 hover:text-base-content'
           "
+          @click="onPrimaryNavClick(nav.href, $event)"
         >
           <!-- Active background glow -->
           <div
@@ -195,7 +213,7 @@ onMounted(() => {
             "
             :style="
               popupOpen || isSecondaryActive
-                ? 'box-shadow: 0 4px 20px color-mix(in oklch, var(--color-primary) 40%, transparent)'
+                ? 'box-shadow: 0 4px 20px color-mix(in oklab, var(--color-primary) 40%, transparent)'
                 : ''
             "
             aria-label="More menu"
@@ -235,6 +253,7 @@ onMounted(() => {
               ? 'text-primary'
               : 'text-base-content/60 hover:text-base-content'
           "
+          @click="onPrimaryNavClick(nav.href, $event)"
         >
           <!-- Active background glow -->
           <div
