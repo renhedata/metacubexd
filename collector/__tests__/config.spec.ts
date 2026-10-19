@@ -7,28 +7,34 @@ describe('collector/config', () => {
     expect(toWsURL('https://host:9090')).toBe('wss://host:9090')
   })
 
+  it('throws when COLLECTOR_TOKEN is missing or empty', () => {
+    expect(() => loadConfig({})).toThrow(/COLLECTOR_TOKEN/)
+    expect(() => loadConfig({ COLLECTOR_TOKEN: '' })).toThrow(/COLLECTOR_TOKEN/)
+  })
+
   it('defaults to an empty mihomo target when MIHOMO_API_URL is missing', () => {
-    const cfg = loadConfig({})
+    const cfg = loadConfig({ COLLECTOR_TOKEN: 'tok' })
     expect(cfg.mihomoApiURL).toBe('')
-    expect(cfg.mihomoWsURL).toBe('')
   })
 
   it('throws when MIHOMO_API_URL is not a valid URL', () => {
-    expect(() => loadConfig({ MIHOMO_API_URL: 'not a url' })).toThrow(
-      /not a valid URL/,
-    )
+    expect(() =>
+      loadConfig({ COLLECTOR_TOKEN: 'tok', MIHOMO_API_URL: 'not a url' }),
+    ).toThrow(/not a valid URL/)
   })
 
   it('applies defaults', () => {
-    const cfg = loadConfig({ MIHOMO_API_URL: 'http://127.0.0.1:9090' })
+    const cfg = loadConfig({
+      COLLECTOR_TOKEN: 'tok',
+      MIHOMO_API_URL: 'http://127.0.0.1:9090',
+    })
     expect(cfg).toMatchObject({
       mihomoApiURL: 'http://127.0.0.1:9090',
-      mihomoWsURL: 'ws://127.0.0.1:9090',
       mihomoSecret: '',
       port: 9797,
       dbPath: './collector-data.sqlite',
       retentionMs: 0,
-      token: '',
+      token: 'tok',
       allowedOrigin: '*',
     })
   })

@@ -1,55 +1,44 @@
-import type { MihomoClient } from './mihomo'
-import type { ConnectionsMessage } from './types'
-import { loadConfig, toWsURL } from './config'
-import { connectMihomo } from './mihomo'
+import type { CollectorConfig } from './config'
+import { createBackendManager } from './backends'
+import { loadConfig } from './config'
 import { createServer } from './server'
 import { createStore } from './store'
-import { createTracker } from './tracker'
 
 const FLUSH_INTERVAL_MS = 30000
 
 function main(): void {
-  const config = loadConfig()
-  const store = createStore(config.dbPath)
-  const tracker = createTracker()
-  const startedAt = Date.now()
-  const log = (m: string): void => console.log(`[collector] ${m}`)
-
-  // The mihomo connection is reconfigurable at runtime: the dashboard pushes its
-  // current endpoint via POST /api/connect, so the daemon needs no manual mihomo
-  // env config. `currentTarget` dedupes redundant reconnects.
-  let client: MihomoClient | null = null
-  let currentTarget = ''
-
-  const connectTo = (apiURL: string, secret: string): void => {
-    let wsURL = ''
-    try {
-      wsURL = toWsURL(apiURL)
-    } catch {
-      log(`ignoring invalid mihomo url: ${apiURL}`)
-      return
-    }
-    const target = `${wsURL}\x1F${secret}`
-    if (client && target === currentTarget) return
-    currentTarget = target
-    client?.close()
-    client = connectMihomo({
-      wsURL,
-      secret,
-      onMessage: (msg) => tracker.processMessage(msg as ConnectionsMessage),
-      log,
-    })
-    log(`connecting to mihomo ${wsURL}`)
+  let config: CollectorConfig
+  try {
+    config = loadConfig()
+  } catch (e) {
+    console.error(`[collector] ${e instanceof Error ? e.message : String(e)}`)
+    process.exit(1)
   }
 
-  if (config.mihomoApiURL) connectTo(config.mihomoApiURL, config.mihomoSecret)
+  const store = createStore(config.dbPath)
+  const log = (m: string): void => console.log(`[collector] ${m}`)
+  const manager = createBackendManager({ store, log })
+  const startedAt = Date.now()
+
+  // Optional seed backend from env; runtime registrations arrive via
+  // POST /api/connect and persist in the backends table.
+  if (config.mihomoApiURL) {
+    manager.upsert(config.mihomoApiURL, config.mihomoSecret)
+  }
+  manager.loadPersisted()
 
   const flush = (): void => {
-    const logs = tracker.drainBuffer()
-    if (logs.length === 0) return
-    store.insertLogs(logs)
-    if (config.retentionMs > 0) {
-      store.cleanup(Date.now() - config.retentionMs)
+    try {
+      for (const { backend, logs } of manager.drainAll()) {
+        store.insertLogs(backend, logs)
+      }
+      if (config.retentionMs > 0) {
+        store.cleanup(Date.now() - config.retentionMs)
+      }
+    } catch (e) {
+      log(
+        `flush error (data may be lost): ${e instanceof Error ? e.message : String(e)}`,
+      )
     }
   }
 
@@ -57,19 +46,28 @@ function main(): void {
 
   const server = createServer({
     store,
+    manager,
     token: config.token,
     allowedOrigin: config.allowedOrigin,
     startedAt,
-    onConnect: connectTo,
   })
+
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    console.error(`[collector] server error: ${err.message}`)
+    process.exit(1)
+  })
+
   server.listen(config.port, () => {
     log(`listening on :${config.port} db=${config.dbPath}`)
   })
 
+  let shuttingDown = false
   const shutdown = (): void => {
+    if (shuttingDown) return
+    shuttingDown = true
     clearInterval(flushTimer)
     flush()
-    client?.close()
+    manager.closeAll()
     server.close()
     store.close()
     process.exit(0)

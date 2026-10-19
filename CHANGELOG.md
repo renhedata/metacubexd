@@ -1,5 +1,294 @@
 # Changelog
 
+## [1.261.8](https://github.com/MetaCubeX/metacubexd/compare/v1.261.7...v1.261.8) (2026-06-25)
+
+
+### Bug Fixes
+
+* **ui:** use neutral border for proxy group cards instead of theme secondary ([dd30e22](https://github.com/MetaCubeX/metacubexd/commit/dd30e22d85f9a91b0fc38e6005d12c5c293fe369))
+
+## [1.261.7](https://github.com/MetaCubeX/metacubexd/compare/v1.261.6...v1.261.7) (2026-06-25)
+
+
+### Bug Fixes
+
+* **server:** inject CONTROL_TOKEN into config.js so the UI unlocks control ([#2074](https://github.com/MetaCubeX/metacubexd/issues/2074)) ([00e53c4](https://github.com/MetaCubeX/metacubexd/commit/00e53c425bf212586564896808e4b6be1357f976))
+
+## [1.261.6](https://github.com/MetaCubeX/metacubexd/compare/v1.261.5...v1.261.6) (2026-06-24)
+
+
+### Bug Fixes
+
+* **ui:** dedupe group members so duplicate node names don't double-select ([e30bc2b](https://github.com/MetaCubeX/metacubexd/commit/e30bc2b3723f91d5ec6523ae4baac05f22418ffc))
+
+## [1.261.5](https://github.com/MetaCubeX/metacubexd/compare/v1.261.4...v1.261.5) (2026-06-24)
+
+
+### Bug Fixes
+
+* **versions:** confirm before upgrading dashboard/core ([#2069](https://github.com/MetaCubeX/metacubexd/issues/2069)) ([4e3a005](https://github.com/MetaCubeX/metacubexd/commit/4e3a0054b40c74d9f327d4ec2bb6a7ab4cb6fd1f))
+
+## [1.261.4](https://github.com/MetaCubeX/metacubexd/compare/v1.261.3...v1.261.4) (2026-06-24)
+
+
+### Bug Fixes
+
+* persist UI config changes to the active profile ([#2070](https://github.com/MetaCubeX/metacubexd/issues/2070)) ([ed3c906](https://github.com/MetaCubeX/metacubexd/commit/ed3c9069d1242ac610d7495ae266a28d7530bbc9))
+
+## [1.261.3](https://github.com/MetaCubeX/metacubexd/compare/v1.261.2...v1.261.3) (2026-06-23)
+
+
+### Bug Fixes
+
+* **server:** auto-start bundled mihomo on boot and bind MIXED_PORT ([de883e3](https://github.com/MetaCubeX/metacubexd/commit/de883e3b42445825f1acd534b579a5c37af9927e)), closes [#2067](https://github.com/MetaCubeX/metacubexd/issues/2067)
+
+## [1.261.2](https://github.com/MetaCubeX/metacubexd/compare/v1.261.1...v1.261.2) (2026-06-23)
+
+
+### Bug Fixes
+
+* **ui:** auto-scroll to selected node and stack master-detail filter rows ([841ff94](https://github.com/MetaCubeX/metacubexd/commit/841ff94c194387f23cbc277561975dd9065a727b))
+
+## [1.261.1](https://github.com/MetaCubeX/metacubexd/compare/v1.261.0...v1.261.1) (2026-06-23)
+
+
+### Bug Fixes
+
+* **server:** serve real static assets from UI_DIST, not the SPA shell ([a978ce9](https://github.com/MetaCubeX/metacubexd/commit/a978ce99124bb57df6f6cc1eb88aac30ec65bdb6)), closes [#2063](https://github.com/MetaCubeX/metacubexd/issues/2063)
+
+## [1.261.0](https://github.com/MetaCubeX/metacubexd/compare/v1.260.0...v1.261.0) (2026-06-22)
+
+
+### Features
+
+* **ui:** filter master-detail nodes by protocol type and UDP/XUDP ([fb70ab5](https://github.com/MetaCubeX/metacubexd/commit/fb70ab5d23f02593053660f29b1ef9686bfcad11))
+
+## [1.260.0](https://github.com/MetaCubeX/metacubexd/compare/v1.259.0...v1.260.0) (2026-06-21)
+
+
+### Features
+
+* **ui:** add useGeneralConfig composable for the general config seam ([f811a10](https://github.com/MetaCubeX/metacubexd/commit/f811a10c277157f427748f10b4d19ce0b1ee8888))
+
+
+### Bug Fixes
+
+* **ui:** localize listener-port labels + final-review cleanups ([9f5b92f](https://github.com/MetaCubeX/metacubexd/commit/9f5b92f0db54e44d744bc6119efa2ceb8a20937a))
+
+## [1.259.0](https://github.com/MetaCubeX/metacubexd/compare/v1.258.4...v1.259.0) (2026-06-21)
+
+
+### Features
+
+* **ui:** add useProxyNode read-model composable ([7dbc097](https://github.com/MetaCubeX/metacubexd/commit/7dbc09737885944a4756b635ccfa520a24967cc0))
+
+## [1.258.4](https://github.com/MetaCubeX/metacubexd/compare/v1.258.3...v1.258.4) (2026-06-21)
+
+
+### Bug Fixes
+
+* **proxies:** require long-press for node tooltip on mobile so tap only selects ([5205b43](https://github.com/MetaCubeX/metacubexd/commit/5205b437e6967d8ba61304f5ee2ede2e906afc12))
+
+## [1.258.3](https://github.com/MetaCubeX/metacubexd/compare/v1.258.2...v1.258.3) (2026-06-21)
+
+
+### Bug Fixes
+
+* honor CONTROL_PORT in docker and auto-refresh after sidebar kernel actions ([275f5af](https://github.com/MetaCubeX/metacubexd/commit/275f5afb7dd7f6ea0307d617bcd8670abc090f12))
+
+## [1.258.2](https://github.com/MetaCubeX/metacubexd/compare/v1.258.1...v1.258.2) (2026-06-21)
+
+
+### Bug Fixes
+
+* **setup:** generate endpoint id without crypto.randomUUID in insecure contexts ([449bdd5](https://github.com/MetaCubeX/metacubexd/commit/449bdd5a4e2ff79814caf12f4562951aa26b62a8)), closes [#2054](https://github.com/MetaCubeX/metacubexd/issues/2054)
+
+## [1.258.1](https://github.com/MetaCubeX/metacubexd/compare/v1.258.0...v1.258.1) (2026-06-20)
+
+
+### Bug Fixes
+
+* **connections:** drop redundant table-container background that banded on h-scroll ([9ed9a13](https://github.com/MetaCubeX/metacubexd/commit/9ed9a134a153dc85014fe6b63ec06b06f93f70c6))
+
+## [1.258.0](https://github.com/MetaCubeX/metacubexd/compare/v1.257.1...v1.258.0) (2026-06-20)
+
+
+### Features
+
+* **connections:** add a leading search icon to the filter input ([7f6f063](https://github.com/MetaCubeX/metacubexd/commit/7f6f063d7b33ffad58fd1876472b6d0f039a9d49))
+* **connections:** make toolbar controls icon-only ([51a3094](https://github.com/MetaCubeX/metacubexd/commit/51a309497184767a999cf46f58131851affff942))
+* **proxies:** add aria-pressed/aria-label to workbench controls ([2a92076](https://github.com/MetaCubeX/metacubexd/commit/2a92076f54de8998000d18c6b6ce5bc38567f060))
+* **proxies:** add gap between leading flag emoji and node name ([cdae7ad](https://github.com/MetaCubeX/metacubexd/commit/cdae7ad42678c5b1c134daedd0760cb6101d7d21))
+* **proxies:** add heuristic node-region parsing utils ([0710d59](https://github.com/MetaCubeX/metacubexd/commit/0710d59791ae723278025157414224d6abb5480a))
+* **proxies:** add PROXIES_ORDERING_TYPE_ORDER constant ([c18fc45](https://github.com/MetaCubeX/metacubexd/commit/c18fc4541bf37b5ec6ca22047871f515f13792af))
+* **proxies:** add region/search/jump workbench to master-detail ([f095883](https://github.com/MetaCubeX/metacubexd/commit/f09588368d64195a5afb325acaf75a281ef1c733))
+* **proxies:** make toolbar controls icon-only ([3a96211](https://github.com/MetaCubeX/metacubexd/commit/3a962119ce477c3b13c4c98934b79ee2a020f279))
+* **proxies:** surface quick sort control in the toolbar ([4915911](https://github.com/MetaCubeX/metacubexd/commit/4915911825ab4f2b8788df3d1adc0eb0543b6c4f))
+* **rules:** make toolbar controls icon-only ([84c0423](https://github.com/MetaCubeX/metacubexd/commit/84c04238a88e15a35ae8042c70f75771f227503a))
+
+
+### Bug Fixes
+
+* **config:** keep setting-card accent ring from being clipped left/right ([97bd14c](https://github.com/MetaCubeX/metacubexd/commit/97bd14c6c00620d0786d51c00710f2103c95ccef))
+* **config:** pad the scroll container on all sides so card rings aren't clipped ([46c96f7](https://github.com/MetaCubeX/metacubexd/commit/46c96f716a85868c15be1ff47162713d2d4993a9))
+* **connections:** gap leading flag in the rule/chains cell too ([1f85076](https://github.com/MetaCubeX/metacubexd/commit/1f85076738672717143f6f783863ae62ce00b66c))
+* **proxies:** drop non-standard UK from region ISO allowlist ([ad6b996](https://github.com/MetaCubeX/metacubexd/commit/ad6b996a3c35d9abfeac157aacefa4e9cbb9a6dd))
+* **proxies:** hide collapse/expand-all toggle in master-detail mode ([7056558](https://github.com/MetaCubeX/metacubexd/commit/70565583673d84261bc50d482f0aea5511d0da80))
+* **proxies:** keep master-detail sticky bar above selected node glow ([2a3d7c3](https://github.com/MetaCubeX/metacubexd/commit/2a3d7c3aaaf3ef06c3e79a68d460df7c9eda92a7))
+* **proxies:** make master-detail workbench bar stick flush to the top ([b01d2c6](https://github.com/MetaCubeX/metacubexd/commit/b01d2c6d178344632a3d88c17a15b8d6f0fd0c7f))
+* **proxies:** normalize leading-flag spacing in names and connection chains ([0428d51](https://github.com/MetaCubeX/metacubexd/commit/0428d51dc9f52fb08803d20bcb24f0ebb359b686))
+* **proxies:** satisfy noUncheckedIndexedAccess in region utils ([feebaaf](https://github.com/MetaCubeX/metacubexd/commit/feebaafc01d135710150205f79a55ac72184be5b))
+* **ui:** stop icon search fields from showing a doubled focus ring ([3ea1ddc](https://github.com/MetaCubeX/metacubexd/commit/3ea1ddc57ce2baeca8c0392eaa1412c46852c4a0))
+
+## [1.257.1](https://github.com/MetaCubeX/metacubexd/compare/v1.257.0...v1.257.1) (2026-06-20)
+
+
+### Bug Fixes
+
+* **ui:** stack sidebar kernel action buttons vertically to prevent text overflow ([fec4cea](https://github.com/MetaCubeX/metacubexd/commit/fec4ceade7111325f4bae847a1029518748d600a))
+
+## [1.257.0](https://github.com/MetaCubeX/metacubexd/compare/v1.256.6...v1.257.0) (2026-06-20)
+
+
+### Features
+
+* **ui:** add sidebar kernel shortcuts and fix overview card background ([717761c](https://github.com/MetaCubeX/metacubexd/commit/717761cc2ea41173bfb6d522021c9ec092498785))
+
+## [1.256.6](https://github.com/MetaCubeX/metacubexd/compare/v1.256.5...v1.256.6) (2026-06-20)
+
+
+### Bug Fixes
+
+* **desktop:** add homepage and author for the Linux package metadata ([f0e937b](https://github.com/MetaCubeX/metacubexd/commit/f0e937b46808d0785191e2838525fa6bc5f09c25))
+
+## [1.256.5](https://github.com/MetaCubeX/metacubexd/compare/v1.256.4...v1.256.5) (2026-06-20)
+
+
+### Bug Fixes
+
+* **desktop:** add a package description for the Linux .deb build ([aaee72d](https://github.com/MetaCubeX/metacubexd/commit/aaee72d6ed8ee77e78afe41d047d497c68b24fba))
+
+## [1.256.4](https://github.com/MetaCubeX/metacubexd/compare/v1.256.3...v1.256.4) (2026-06-20)
+
+
+### Bug Fixes
+
+* **desktop:** set the Linux .deb package maintainer ([d9de6fa](https://github.com/MetaCubeX/metacubexd/commit/d9de6fa88e770c9bf6f72e92e7f4130dfbf8b265))
+
+## [1.256.3](https://github.com/MetaCubeX/metacubexd/compare/v1.256.2...v1.256.3) (2026-06-20)
+
+
+### Bug Fixes
+
+* **desktop:** unblock the Windows and Linux release packaging ([f44b502](https://github.com/MetaCubeX/metacubexd/commit/f44b502540292aec557f421d8d26ad3910ee0732))
+
+## [1.256.2](https://github.com/MetaCubeX/metacubexd/compare/v1.256.1...v1.256.2) (2026-06-20)
+
+
+### Bug Fixes
+
+* **agent:** extract the correct mihomo binary entry from the Windows zip ([98c10c4](https://github.com/MetaCubeX/metacubexd/commit/98c10c4e0e2ff75fd028f4627f78e90df377fc08))
+* **deps:** patch Dependabot transitive vulnerabilities ([c5ef22d](https://github.com/MetaCubeX/metacubexd/commit/c5ef22df9809c466da34d8253b5ec6cc98e442b2))
+* **desktop:** locate the linux executable in the after-pack fuses hook ([691639a](https://github.com/MetaCubeX/metacubexd/commit/691639aa16edcbd331b4511eea3bf051bedcd2bb))
+
+## [1.256.1](https://github.com/MetaCubeX/metacubexd/compare/v1.256.0...v1.256.1) (2026-06-20)
+
+
+### Bug Fixes
+
+* **ui:** render custom background over the daisyUI theme layer ([52be2a2](https://github.com/MetaCubeX/metacubexd/commit/52be2a2c5f984aa6f70d24937d06a43b63721e2f)), closes [#2035](https://github.com/MetaCubeX/metacubexd/issues/2035)
+* **ui:** scope Twemoji font to flag codepoints ([08f16ec](https://github.com/MetaCubeX/metacubexd/commit/08f16ec0f8ff90f298952a8c388d8b5136c2d736)), closes [#2038](https://github.com/MetaCubeX/metacubexd/issues/2038)
+* **ui:** stop auto-switch from reselecting select groups onto subgroups ([c9eb2b6](https://github.com/MetaCubeX/metacubexd/commit/c9eb2b6be7324994d4d9e3cc19a79f7df451885b)), closes [#2040](https://github.com/MetaCubeX/metacubexd/issues/2040)
+* **ui:** widen per-node latency test client timeout ([c481231](https://github.com/MetaCubeX/metacubexd/commit/c4812316f62611de6fc33ad99d86e69b247d026b)), closes [#2041](https://github.com/MetaCubeX/metacubexd/issues/2041)
+
+## [1.256.0](https://github.com/MetaCubeX/metacubexd/compare/v1.255.2...v1.256.0) (2026-06-18)
+
+
+### Features
+
+* **connections:** resolve client & destination hostnames via reverse DNS ([#2036](https://github.com/MetaCubeX/metacubexd/issues/2036)) ([1caa048](https://github.com/MetaCubeX/metacubexd/commit/1caa048a97635f25b02a5a2a98312382a5152ac4))
+
+## [1.255.2](https://github.com/MetaCubeX/metacubexd/compare/v1.255.1...v1.255.2) (2026-06-15)
+
+
+### Bug Fixes
+
+* **rules:** align filter toolbar chips with adjacent controls ([160480e](https://github.com/MetaCubeX/metacubexd/commit/160480e59410888856bdd1c4887c7ce265d50ec1))
+
+## [1.255.1](https://github.com/MetaCubeX/metacubexd/compare/v1.255.0...v1.255.1) (2026-06-15)
+
+
+### Bug Fixes
+
+* **config:** read unified delay from backend key ([#2031](https://github.com/MetaCubeX/metacubexd/issues/2031)) ([e72d6f1](https://github.com/MetaCubeX/metacubexd/commit/e72d6f1f8fd2dba254a8e05a1a50eecc092c992a))
+
+## [1.255.0](https://github.com/MetaCubeX/metacubexd/compare/v1.254.2...v1.255.0) (2026-06-14)
+
+
+### Features
+
+* **rules:** add quick filters and sorting to the rules list page ([e9b5a3f](https://github.com/MetaCubeX/metacubexd/commit/e9b5a3fcf6e6aaf2a011fc1b64b8edb3d9cf4f57))
+
+## [1.254.2](https://github.com/MetaCubeX/metacubexd/compare/v1.254.1...v1.254.2) (2026-06-13)
+
+
+### Performance Improvements
+
+* **modal:** drop blur animations to fix open-lag and bottom-content artifact ([5a270eb](https://github.com/MetaCubeX/metacubexd/commit/5a270eb6835bf1f552844dbd40000baa26ea591e))
+
+## [1.254.1](https://github.com/MetaCubeX/metacubexd/compare/v1.254.0...v1.254.1) (2026-06-13)
+
+
+### Bug Fixes
+
+* **connections:** restore searching by destination IP ([#2021](https://github.com/MetaCubeX/metacubexd/issues/2021)) ([eca2606](https://github.com/MetaCubeX/metacubexd/commit/eca2606fa8a924efaeea33d99c1adcccb47099bd)), closes [#2013](https://github.com/MetaCubeX/metacubexd/issues/2013)
+* **proxies:** apply Twemoji font to node detail tooltip ([#2026](https://github.com/MetaCubeX/metacubexd/issues/2026)) ([203b957](https://github.com/MetaCubeX/metacubexd/commit/203b957a056239cb68e45076aede5da9aa5e17c4)), closes [#2017](https://github.com/MetaCubeX/metacubexd/issues/2017)
+* **proxies:** make 'auto switch to recommended' setting work ([#2025](https://github.com/MetaCubeX/metacubexd/issues/2025)) ([13e6f18](https://github.com/MetaCubeX/metacubexd/commit/13e6f18dc1766bab9c6763991ce0f2c3554e4742)), closes [#1971](https://github.com/MetaCubeX/metacubexd/issues/1971)
+* use opaque apple-touch-icon to remove iOS black corners ([#2022](https://github.com/MetaCubeX/metacubexd/issues/2022)) ([be7aeb3](https://github.com/MetaCubeX/metacubexd/commit/be7aeb3780bee0666bd52b2c2c458b4e4039a143)), closes [#436](https://github.com/MetaCubeX/metacubexd/issues/436)
+* **versions:** stop showing bogus backend update for sing-box ([#2027](https://github.com/MetaCubeX/metacubexd/issues/2027)) ([4af41c4](https://github.com/MetaCubeX/metacubexd/commit/4af41c4554107603379de4b72bf5d554d1978dd7))
+
+## [1.254.0](https://github.com/MetaCubeX/metacubexd/compare/v1.253.0...v1.254.0) (2026-06-13)
+
+
+### Features
+
+* add competitor-parity features across proxies, connections, logs, config ([4d58a99](https://github.com/MetaCubeX/metacubexd/commit/4d58a990765a081c064af3b3181355f35fb31f0e))
+
+
+### Bug Fixes
+
+* **connections:** drop duplicate IPInfo re-export from useGeoLookup ([986600b](https://github.com/MetaCubeX/metacubexd/commit/986600bedb7cbbb3f2bc3373f0b2f7c594369d23))
+
+## [1.253.0](https://github.com/MetaCubeX/metacubexd/compare/v1.252.0...v1.253.0) (2026-06-13)
+
+
+### Features
+
+* **proxies:** add i18n for table/chips/master display modes ([249b2f8](https://github.com/MetaCubeX/metacubexd/commit/249b2f883a44f68e7b31e703505386f9ec6bffcf))
+* **proxies:** add ProxyMasterDetail master-detail layout component ([a2a1d40](https://github.com/MetaCubeX/metacubexd/commit/a2a1d4076127e7472ca298955c65c77e007818cf))
+* **proxies:** add ProxyNodeChip component for chips display mode ([e7237c9](https://github.com/MetaCubeX/metacubexd/commit/e7237c9078a50be19ab6264866f45f609302386e))
+* **proxies:** add ProxyNodeTableRow component for table display mode ([aa476c7](https://github.com/MetaCubeX/metacubexd/commit/aa476c7bbedad827fc012f86e7ac572118962814))
+* **proxies:** add resolveActiveGroup helper for master-detail ([055921d](https://github.com/MetaCubeX/metacubexd/commit/055921dc6ce72d71d80aa73a2e38ad304c0fc6b1))
+* **proxies:** extend display mode enum with table/chips/master ([60881b5](https://github.com/MetaCubeX/metacubexd/commit/60881b57aaacd964c40b01cb3066858900d0f16b))
+* **proxies:** master-detail layout on proxies tab, list fallback for providers ([1085a67](https://github.com/MetaCubeX/metacubexd/commit/1085a6740cbd27649c3fd074aa22b35145e219f0))
+* **proxies:** render chips mode in group panels ([5c08965](https://github.com/MetaCubeX/metacubexd/commit/5c08965c674d08f4ad34a5a409d8344fc43bfdea))
+* **proxies:** render table mode with per-group header row ([8b02fdc](https://github.com/MetaCubeX/metacubexd/commit/8b02fdc880811a9e5d59b1362a5c9173d442c6f4))
+* **proxies:** toolbar segmented display-mode switcher, drop settings select ([8be9dfd](https://github.com/MetaCubeX/metacubexd/commit/8be9dfd1b390ab4e8130ae2c917f2b508a6af6b2))
+
+
+### Bug Fixes
+
+* **proxies:** make table & master-detail modes mobile-friendly ([7ee86e4](https://github.com/MetaCubeX/metacubexd/commit/7ee86e432d899e0850da6595e7ddc50220048489))
+* **proxies:** use real i18n keys for table header to stop intlify warnings ([1e6ace8](https://github.com/MetaCubeX/metacubexd/commit/1e6ace8017ca3b22cb734659259bc0721c98c1d4))
+* **pwa:** skip manifest link tag under nuxt dev ([ed27509](https://github.com/MetaCubeX/metacubexd/commit/ed2750918110bb9c4d322c8acb7bb21a4477c319))
+
+## [1.252.0](https://github.com/MetaCubeX/metacubexd/compare/v1.251.3...v1.252.0) (2026-06-13)
+
+
+### Features
+
+* **proxies:** add collapse/expand all proxy groups toggle ([12dbea7](https://github.com/MetaCubeX/metacubexd/commit/12dbea7bdf22eae7dd9819f2b4ef2c23c951dc6c))
+
 ## [1.251.3](https://github.com/MetaCubeX/metacubexd/compare/v1.251.2...v1.251.3) (2026-06-05)
 
 

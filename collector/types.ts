@@ -1,7 +1,6 @@
 // collector/types.ts
 
-// Mirrors DataUsageLog in ~/utils/db.ts so the HTTP API is shape-compatible
-// with what the frontend's useDataUsage aggregation expects.
+// DataUsageLog is the collector's own row shape for stored connection deltas.
 export interface DataUsageLog {
   id?: number
   timestamp: number
@@ -37,4 +36,30 @@ export interface ConnectionsMessage {
   connections?: RawConnection[]
   uploadTotal?: number
   downloadTotal?: number
+}
+
+export const DIMENSIONS = [
+  'sourceIP',
+  'host',
+  'outbound',
+  'process',
+  'inboundUser',
+] as const
+
+export type Dimension = (typeof DIMENSIONS)[number]
+export type GroupBy = Dimension | 'time'
+
+export interface AggregateQuery {
+  start: number
+  end: number
+  groupBy: GroupBy
+  filters?: Partial<Record<Dimension, string>>
+  bucketMs?: number
+}
+
+export interface AggregateRow {
+  label: string | number
+  upload: number
+  download: number
+  count: number
 }

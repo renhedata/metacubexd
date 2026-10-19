@@ -16,11 +16,15 @@ jobs:
   release-please:
     permissions:
       contents: write
+      pull-requests: write
 
     runs-on: ubuntu-latest
 
     outputs:
-      release_created: ${{ steps.release.outputs.release_created }}
+      # release-please sets release_created to the STRING "false" when no release
+      # is cut; GitHub Actions treats a non-empty string as truthy in `if:`, so
+      # normalize to "true"/"" to gate the downstream jobs correctly.
+      release_created: ${{ steps.release.outputs.release_created == 'true' && 'true' || '' }}
       tag_name: ${{ steps.release.outputs.tag_name }}
 
     steps:
@@ -29,7 +33,6 @@ jobs:
         uses: googleapis/release-please-action@v5
         with:
           token: ${{ secrets.CI_TOKEN }}
-          release-type: node
 
   release-assets:
     needs: release-please
@@ -42,7 +45,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: pnpm/action-setup@v6
 
@@ -55,19 +58,19 @@ jobs:
         run: pnpm install
 
       - name: build
-        run: NUXT_APP_BASE_URL='./' pnpm generate
+        run: NUXT_APP_BASE_URL='./' pnpm --filter @metacubexd/ui generate
 
       - name: publish gh-pages
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.CI_TOKEN }}
-          publish_dir: ./.output/public
+          publish_dir: ./packages/ui/.output/public
           force_orphan: true
           cname: d.metacubex.one
           commit_message: ${{ needs.release-please.outputs.tag_name }}
 
       - name: compress dist
-        run: tar czvf compressed-dist.tgz -C .output/public .
+        run: tar czvf compressed-dist.tgz -C packages/ui/.output/public .
 
       - name: attach github release artifacts
         uses: softprops/action-gh-release@v3
@@ -76,7 +79,11 @@ jobs:
           files: compressed-dist.tgz
           tag_name: ${{ needs.release-please.outputs.tag_name }}
 
-  release-image:
+  # NOTE: the legacy static-panel image (ghcr.io/metacubex/metacubexd) built from
+  # a repo-root Dockerfile was dropped in the monorepo migration (the Dockerfile
+  # no longer exists). The hosted gh-pages panel + the all-in-one server image
+  # below supersede it.
+  release-server-image:
     needs: release-please
     if: ${{ needs.release-please.outputs.release_created }}
 
@@ -87,7 +94,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: docker/setup-qemu-action@v4
 
@@ -108,20 +115,94 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.CI_TOKEN }}
+          # GITHUB_TOKEN (+ packages: write) can create the repo-owned package;
+          # the CI_TOKEN PAT was denied create_package for the new server image.
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: docker/build-push-action@v7
         with:
           context: .
           builder: ${{ steps.buildx.outputs.name }}
-          file: Dockerfile
+          file: apps/server/Dockerfile
           push: true
           platforms: linux/amd64,linux/arm64
+          build-args: |
+            MIHOMO_VERSION=v1.19.27
           cache-from: type=gha
           cache-to: type=gha,mode=max
           tags: |
-            ghcr.io/metacubex/metacubexd:latest
-            ghcr.io/metacubex/metacubexd:${{ needs.release-please.outputs.tag_name }}
+            ghcr.io/metacubex/metacubexd-server:latest
+            ghcr.io/metacubex/metacubexd-server:${{ needs.release-please.outputs.tag_name }}
+
+  release-desktop:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created }}
+
+    permissions:
+      contents: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: macos-14, ebargs: '--mac --arm64' }
+          - { os: macos-15-intel, ebargs: '--mac --x64' }
+          - { os: windows-latest, ebargs: '--win --x64 --arm64' }
+          - { os: ubuntu-latest, ebargs: '--linux --x64 --arm64' }
+
+    runs-on: ${{ matrix.os }}
+
+    env:
+      MIHOMO_VERSION: v1.19.27
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          cache: pnpm
+          node-version: latest
+
+      - name: install dependencies
+        run: pnpm install
+
+      - name: build ui (static, relative base for file://)
+        run: pnpm --filter @metacubexd/ui generate
+        env:
+          NUXT_APP_BASE_URL: './'
+
+      - name: copy ui into desktop renderer
+        run: rm -rf apps/desktop/renderer && cp -r packages/ui/.output/public apps/desktop/renderer
+        shell: bash
+
+      # Host-arch warm-up only; the authoritative PER-ARCH staging happens in
+      # electron-builder's beforePack hook (scripts/before-pack.cjs), which
+      # re-stages the matching kernel before each --x64/--arm64 app is packed.
+      - name: prefetch bundled mihomo (host arch; per-arch staging in beforePack)
+        run: pnpm --filter @metacubexd/desktop fetch:mihomo
+
+      - name: electron-vite build (main + preload)
+        run: pnpm --filter @metacubexd/desktop build
+
+      - name: electron-builder (unsigned)
+        run: pnpm --filter @metacubexd/desktop exec electron-builder ${{ matrix.ebargs }} -c.mac.identity=null --publish never
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: attach desktop installers to release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ needs.release-please.outputs.tag_name }}
+          files: |
+            apps/desktop/dist/*.dmg
+            apps/desktop/dist/*.zip
+            apps/desktop/dist/*.exe
+            apps/desktop/dist/*.AppImage
+            apps/desktop/dist/*.deb
 
   update-screenshots:
     needs: release-please
@@ -133,7 +214,7 @@ jobs:
     runs-on: macos-latest
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           token: ${{ secrets.CI_TOKEN }}
 
@@ -148,13 +229,13 @@ jobs:
         run: pnpm install
 
       - name: install playwright browsers
-        run: pnpm playwright install chromium
+        run: pnpm --filter @metacubexd/ui exec playwright install chromium
 
       - name: build with mock mode
-        run: pnpm generate:mock
+        run: pnpm --filter @metacubexd/ui generate:mock
 
       - name: generate screenshots
-        run: pnpm screenshot
+        run: pnpm --filter @metacubexd/ui screenshot
 
       - name: commit and push screenshots
         run: |
