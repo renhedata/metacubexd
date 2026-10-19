@@ -29,42 +29,100 @@ export interface Store {
 
 export function createStore(dbPath: string): Store {
   const db = new DatabaseSync(dbPath)
+  let transactionStarted = false
 
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS data_usage_logs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      timestamp INTEGER NOT NULL,
-      sourceIP TEXT NOT NULL,
-      host TEXT NOT NULL,
-      outbound TEXT NOT NULL,
-      process TEXT NOT NULL,
-      inboundUser TEXT NOT NULL,
-      upload INTEGER NOT NULL,
-      download INTEGER NOT NULL,
-      backend TEXT NOT NULL DEFAULT ''
-    );
-    CREATE TABLE IF NOT EXISTS backends (
-      url TEXT PRIMARY KEY,
-      secret TEXT NOT NULL,
-      addedAt INTEGER NOT NULL
-    );
-  `)
-
-  // v1 databases predate the backend column; legacy rows keep backend='' —
-  // invisible to per-backend queries, intentionally preserved.
-  const cols = db.prepare('PRAGMA table_info(data_usage_logs)').all() as {
-    name: string
-  }[]
-  if (!cols.some((c) => c.name === 'backend')) {
-    db.exec(
-      "ALTER TABLE data_usage_logs ADD COLUMN backend TEXT NOT NULL DEFAULT ''",
+  try {
+    db.exec('PRAGMA busy_timeout = 5000')
+    const journal = db.prepare('PRAGMA journal_mode').get() as {
+      journal_mode: string
+    }
+    if (journal.journal_mode !== 'wal') db.exec('PRAGMA journal_mode = WAL')
+    const hasTotalsStmt = db.prepare(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'data_usage_totals'",
     )
+    // Subsequent starts only read the migration marker; no schema write lock.
+    if (!hasTotalsStmt.get()) {
+      db.exec('BEGIN IMMEDIATE')
+      transactionStarted = true
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS data_usage_logs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          timestamp INTEGER NOT NULL,
+          sourceIP TEXT NOT NULL,
+          host TEXT NOT NULL,
+          outbound TEXT NOT NULL,
+          process TEXT NOT NULL,
+          inboundUser TEXT NOT NULL,
+          upload INTEGER NOT NULL,
+          download INTEGER NOT NULL,
+          backend TEXT NOT NULL DEFAULT ''
+        );
+        CREATE TABLE IF NOT EXISTS backends (
+          url TEXT PRIMARY KEY,
+          secret TEXT NOT NULL,
+          addedAt INTEGER NOT NULL
+        );
+      `)
+
+      // Legacy rows retain backend='', including in the totals backfill.
+      const cols = db.prepare('PRAGMA table_info(data_usage_logs)').all() as {
+        name: string
+      }[]
+      if (!cols.some((c) => c.name === 'backend')) {
+        db.exec(
+          "ALTER TABLE data_usage_logs ADD COLUMN backend TEXT NOT NULL DEFAULT ''",
+        )
+      }
+      db.exec(`
+        CREATE INDEX IF NOT EXISTS idx_timestamp ON data_usage_logs (timestamp);
+        CREATE INDEX IF NOT EXISTS idx_backend_timestamp
+          ON data_usage_logs (backend, timestamp);
+      `)
+
+      // Recheck after taking the lock in case another opener finished migration.
+      if (!hasTotalsStmt.get()) {
+        // Exact timestamps preserve inclusive edges and arbitrary query buckets.
+        // Table creation, backfill and triggers commit as one migration marker.
+        db.exec(`
+          CREATE TABLE data_usage_totals (
+            backend TEXT NOT NULL,
+            timestamp INTEGER NOT NULL,
+            upload INTEGER NOT NULL,
+            download INTEGER NOT NULL,
+            count INTEGER NOT NULL,
+            PRIMARY KEY (backend, timestamp)
+          ) WITHOUT ROWID;
+          INSERT INTO data_usage_totals (backend, timestamp, upload, download, count)
+            SELECT backend, timestamp, SUM(upload), SUM(download), COUNT(*)
+            FROM data_usage_logs GROUP BY backend, timestamp;
+          CREATE TRIGGER data_usage_logs_insert_totals AFTER INSERT ON data_usage_logs
+          BEGIN
+            INSERT INTO data_usage_totals (backend, timestamp, upload, download, count)
+            VALUES (NEW.backend, NEW.timestamp, NEW.upload, NEW.download, 1)
+            ON CONFLICT (backend, timestamp) DO UPDATE SET
+              upload = upload + excluded.upload,
+              download = download + excluded.download,
+              count = count + 1;
+          END;
+          CREATE TRIGGER data_usage_logs_delete_totals AFTER DELETE ON data_usage_logs
+          BEGIN
+            UPDATE data_usage_totals SET
+              upload = upload - OLD.upload,
+              download = download - OLD.download,
+              count = count - 1
+            WHERE backend = OLD.backend AND timestamp = OLD.timestamp;
+            DELETE FROM data_usage_totals
+            WHERE backend = OLD.backend AND timestamp = OLD.timestamp AND count = 0;
+          END;
+        `)
+      }
+      db.exec('COMMIT')
+    }
+  } catch (e) {
+    if (transactionStarted) db.exec('ROLLBACK')
+    db.close()
+    throw e
   }
-  db.exec(`
-    DROP INDEX IF EXISTS idx_timestamp;
-    CREATE INDEX IF NOT EXISTS idx_backend_timestamp
-      ON data_usage_logs (backend, timestamp);
-  `)
 
   const insertStmt = db.prepare(
     `INSERT INTO data_usage_logs
@@ -89,9 +147,11 @@ export function createStore(dbPath: string): Store {
     'SELECT url, secret, addedAt FROM backends ORDER BY addedAt ASC, url ASC',
   )
   const countByBackendStmt = db.prepare(
-    'SELECT COUNT(*) AS n FROM data_usage_logs WHERE backend = ?',
+    'SELECT COALESCE(SUM(count), 0) AS n FROM data_usage_totals WHERE backend = ?',
   )
-  const countStmt = db.prepare('SELECT COUNT(*) AS n FROM data_usage_logs')
+  const countStmt = db.prepare(
+    'SELECT COALESCE(SUM(count), 0) AS n FROM data_usage_totals',
+  )
   const cleanupStmt = db.prepare(
     'DELETE FROM data_usage_logs WHERE timestamp < ?',
   )
@@ -124,48 +184,7 @@ export function createStore(dbPath: string): Store {
       return queryStmt.all(backend, start, end) as unknown as DataUsageLog[]
     },
     aggregate(backend, query) {
-      const { start, end, groupBy, filters = {}, bucketMs } = query
-
-      const where = ['backend = ?', 'timestamp >= ?', 'timestamp <= ?']
-      const whereParams: (string | number)[] = [backend, start, end]
-      for (const dim of DIMENSIONS) {
-        const v = filters[dim as Dimension]
-        if (v !== undefined) {
-          where.push(`${dim} = ?`)
-          whereParams.push(v)
-        }
-      }
-      const whereSql = where.join(' AND ')
-
-      if (groupBy === 'time') {
-        if (!bucketMs || bucketMs <= 0) {
-          throw new Error('bucketMs is required for time grouping')
-        }
-        const sql = `SELECT CAST(timestamp / ? AS INTEGER) * ? AS label,
-                            SUM(upload) AS upload, SUM(download) AS download, COUNT(*) AS count
-                       FROM data_usage_logs
-                      WHERE ${whereSql}
-                      GROUP BY CAST(timestamp / ? AS INTEGER)
-                      ORDER BY label ASC`
-        return db
-          .prepare(sql)
-          .all(
-            bucketMs,
-            bucketMs,
-            ...whereParams,
-            bucketMs,
-          ) as unknown as AggregateRow[]
-      }
-
-      if (!DIMENSIONS.includes(groupBy as Dimension)) {
-        throw new Error(`invalid groupBy: ${groupBy}`)
-      }
-      const sql = `SELECT ${groupBy} AS label,
-                          SUM(upload) AS upload, SUM(download) AS download, COUNT(*) AS count
-                     FROM data_usage_logs
-                    WHERE ${whereSql}
-                    GROUP BY ${groupBy}`
-      return db.prepare(sql).all(...whereParams) as unknown as AggregateRow[]
+      return aggregateLogs(db, backend, query)
     },
     clearBackend(backend) {
       clearBackendStmt.run(backend)
@@ -195,4 +214,56 @@ export function createStore(dbPath: string): Store {
       db.close()
     },
   }
+}
+
+export function aggregateLogs(
+  db: DatabaseSync,
+  backend: string,
+  query: AggregateQuery,
+): AggregateRow[] {
+  const { start, end, groupBy, filters = {}, bucketMs } = query
+
+  const where = ['backend = ?', 'timestamp >= ?', 'timestamp <= ?']
+  const whereParams: (string | number)[] = [backend, start, end]
+  for (const dim of DIMENSIONS) {
+    const v = filters[dim as Dimension]
+    if (v !== undefined) {
+      where.push(`${dim} = ?`)
+      whereParams.push(v)
+    }
+  }
+  const whereSql = where.join(' AND ')
+
+  if (groupBy === 'time') {
+    if (!bucketMs || bucketMs <= 0) {
+      throw new Error('bucketMs is required for time grouping')
+    }
+    const useTotals = whereParams.length === 3
+    const table = useTotals ? 'data_usage_totals' : 'data_usage_logs'
+    const count = useTotals ? 'SUM(count)' : 'COUNT(*)'
+    const sql = `SELECT CAST(timestamp / ? AS INTEGER) * ? AS label,
+                        SUM(upload) AS upload, SUM(download) AS download, ${count} AS count
+                   FROM ${table}
+                  WHERE ${whereSql}
+                  GROUP BY CAST(timestamp / ? AS INTEGER)
+                  ORDER BY label ASC`
+    return db
+      .prepare(sql)
+      .all(
+        bucketMs,
+        bucketMs,
+        ...whereParams,
+        bucketMs,
+      ) as unknown as AggregateRow[]
+  }
+
+  if (!DIMENSIONS.includes(groupBy as Dimension)) {
+    throw new Error(`invalid groupBy: ${groupBy}`)
+  }
+  const sql = `SELECT ${groupBy} AS label,
+                      SUM(upload) AS upload, SUM(download) AS download, COUNT(*) AS count
+                 FROM data_usage_logs
+                WHERE ${whereSql}
+                GROUP BY ${groupBy}`
+  return db.prepare(sql).all(...whereParams) as unknown as AggregateRow[]
 }

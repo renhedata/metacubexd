@@ -118,6 +118,40 @@ describe('composables/useDataUsageSource', () => {
     await expect(useDataUsageSource().aggregate(dimQuery)).rejects.toThrow()
   })
 
+  it('cancels a superseded HTTP request without cancelling an independent load', async () => {
+    const controller = new AbortController()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url, options: RequestInit) => {
+        if (!options.signal) {
+          return Promise.resolve({
+            ok: true,
+            json: async () => [{ label: 10, upload: 4, download: 5, count: 1 }],
+          })
+        }
+        const { promise, reject } = Promise.withResolvers<never>()
+        options.signal.addEventListener(
+          'abort',
+          () => reject(options.signal!.reason),
+          { once: true },
+        )
+        return promise
+      }),
+    )
+    const source = useDataUsageSource()
+    const superseded = source.aggregate(dimQuery, controller.signal)
+    const independent = source.aggregate({
+      ...dimQuery,
+      groupBy: 'time',
+      bucketMs: 10,
+    })
+    controller.abort()
+    await expect(superseded).rejects.toMatchObject({ name: 'AbortError' })
+    await expect(independent).resolves.toEqual([
+      { label: 10, upload: 4, download: 5, count: 1 },
+    ])
+  })
+
   it('clearCollectorData issues a backend-scoped DELETE', async () => {
     const fetchMock = vi
       .fn()

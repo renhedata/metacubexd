@@ -1,4 +1,5 @@
 import type { CollectorConfig } from './config'
+import { createAggregateReader } from './aggregate'
 import { createBackendManager } from './backends'
 import { loadConfig } from './config'
 import { createServer } from './server'
@@ -16,6 +17,7 @@ function main(): void {
   }
 
   const store = createStore(config.dbPath)
+  const aggregates = createAggregateReader(config.dbPath)
   const log = (m: string): void => console.log(`[collector] ${m}`)
   const manager = createBackendManager({ store, log })
   const startedAt = Date.now()
@@ -46,6 +48,7 @@ function main(): void {
 
   const server = createServer({
     store,
+    aggregates,
     manager,
     token: config.token,
     allowedOrigin: config.allowedOrigin,
@@ -69,6 +72,7 @@ function main(): void {
     flush()
     manager.closeAll()
     server.close()
+    aggregates.close()
     store.close()
     process.exit(0)
   }

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { createStore } from '../store'
+import { aggregateLogs, createStore } from '../store'
 
 const A = 'http://mihomo-a:9090'
 const B = 'http://mihomo-b:9090'
@@ -164,6 +164,86 @@ describe('collector/store', () => {
     ])
   })
 
+  it('preserves exact inclusive edges, original counts, and defined filters for time totals', () => {
+    store.insertLogs(A, [
+      makeLog({ timestamp: 1000, upload: 99 }),
+      makeLog({ timestamp: 1001, host: '', upload: 2, download: 20 }),
+      makeLog({ timestamp: 1001, upload: 3, download: 30 }),
+      makeLog({ timestamp: 1002, upload: 4, download: 40 }),
+      makeLog({ timestamp: 1999, upload: 5, download: 50 }),
+      makeLog({ timestamp: 2000, upload: 6, download: 60 }),
+      makeLog({ timestamp: 2001, upload: 99 }),
+    ])
+    store.insertLogs(B, [makeLog({ timestamp: 1001, upload: 999 })])
+    const query = {
+      start: 1001,
+      end: 2000,
+      groupBy: 'time' as const,
+      bucketMs: 700,
+    }
+    const expected = [
+      { label: 700, upload: 9, download: 90, count: 3 },
+      { label: 1400, upload: 11, download: 110, count: 2 },
+    ]
+
+    expect(store.aggregate(A, query)).toEqual(expected)
+    expect(
+      store.aggregate(A, { ...query, filters: { host: undefined } }),
+    ).toEqual(expected)
+    expect(
+      store.aggregate(A, { ...query, filters: { sourceIP: '10.0.0.1' } }),
+    ).toEqual(expected)
+    expect(store.aggregate(A, { ...query, filters: { host: '' } })).toEqual([
+      { label: 700, upload: 2, download: 20, count: 1 },
+    ])
+    expect(store.aggregate(A, { ...query, start: 1003, end: 1998 })).toEqual([])
+  })
+
+  it('rolls totals back with failed inserts and keeps them consistent through deletions', () => {
+    store.insertLogs(A, [
+      makeLog({ timestamp: 1000 }),
+      makeLog({ timestamp: 1000 }),
+    ])
+    expect(() =>
+      store.insertLogs(A, [
+        makeLog({ timestamp: 1000, upload: 999 }),
+        makeLog({ host: null as unknown as string }),
+      ]),
+    ).toThrow()
+    const query = {
+      start: 0,
+      end: 100000,
+      groupBy: 'time' as const,
+      bucketMs: 1000,
+    }
+    expect(store.count()).toBe(2)
+    expect(store.aggregate(A, query)).toEqual([
+      { label: 1000, upload: 200, download: 400, count: 2 },
+    ])
+
+    store.insertLogs(A, [makeLog({ timestamp: 2000 })])
+    store.insertLogs(B, [
+      makeLog({ timestamp: 1000 }),
+      makeLog({ timestamp: 2000 }),
+    ])
+    store.cleanup(2000)
+    expect(store.count()).toBe(2)
+    expect(store.countByBackend(A)).toBe(1)
+    expect(store.countByBackend(B)).toBe(1)
+    expect(store.aggregate(A, query)).toEqual([
+      { label: 2000, upload: 100, download: 200, count: 1 },
+    ])
+    store.clearBackend(B)
+    expect(store.aggregate(B, query)).toEqual([])
+    expect(store.countByBackend(B)).toBe(0)
+    store.upsertBackend(A, 'secret')
+    store.removeBackend(A)
+    expect(store.count()).toBe(0)
+    expect(store.aggregate(A, query)).toEqual([])
+    store.insertLogs(A, [makeLog({ timestamp: 2000 })])
+    expect(store.count()).toBe(1)
+  })
+
   it('scopes aggregation to the requested backend', () => {
     store.insertLogs(A, [makeLog({ outbound: 'PROXY', upload: 10 })])
     store.insertLogs(B, [makeLog({ outbound: 'PROXY', upload: 99 })])
@@ -222,8 +302,119 @@ describe('collector/store', () => {
       expect(migrated.query(A, 0, 100000)).toEqual([])
       migrated.insertLogs(A, [makeLog()])
       expect(migrated.countByBackend(A)).toBe(1)
+      expect(
+        migrated.aggregate('', {
+          start: 60000,
+          end: 60000,
+          groupBy: 'time',
+          bucketMs: 70000,
+        }),
+      ).toEqual([{ label: 0, upload: 1, download: 2, count: 1 }])
+      const reader = createStore(dbPath)
+      try {
+        expect(reader.count()).toBe(2)
+        expect(reader.countByBackend('')).toBe(1)
+        expect(reader.countByBackend(A)).toBe(1)
+        migrated.insertLogs(A, [makeLog()])
+        expect(reader.countByBackend(A)).toBe(2)
+      } finally {
+        reader.close()
+      }
     } finally {
       migrated.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('rolls back a failed totals migration and backfills only once after reopening', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'collector-store-'))
+    const dbPath = join(dir, 'rollback.sqlite')
+    const original = createStore(dbPath)
+    original.insertLogs(A, [makeLog(), makeLog()])
+    original.close()
+    const db = new DatabaseSync(dbPath)
+    try {
+      expect(db.prepare('PRAGMA journal_mode').get()).toMatchObject({
+        journal_mode: 'wal',
+      })
+      // Simulate a pre-totals database with a conflicting trigger name.
+      db.exec(`
+        DROP TRIGGER data_usage_logs_delete_totals;
+        DROP TABLE data_usage_totals;
+        DROP INDEX idx_timestamp;
+      `)
+      expect(() => createStore(dbPath)).toThrow()
+      expect(
+        db
+          .prepare(
+            "SELECT name FROM sqlite_master WHERE name IN ('data_usage_totals', 'idx_timestamp')",
+          )
+          .all(),
+      ).toEqual([])
+      expect(
+        db.prepare('SELECT COUNT(*) AS n FROM data_usage_logs').get(),
+      ).toMatchObject({ n: 2 })
+      db.exec('DROP TRIGGER data_usage_logs_insert_totals')
+      const migrated = createStore(dbPath)
+      try {
+        expect(migrated.count()).toBe(2)
+        expect(
+          migrated.aggregate(A, {
+            start: 0,
+            end: 100000,
+            groupBy: 'time',
+            bucketMs: 100000,
+          }),
+        ).toEqual([{ label: 0, upload: 200, download: 400, count: 2 }])
+      } finally {
+        migrated.close()
+      }
+      // Reopening a migrated reader must not need the writer's reserved lock.
+      db.exec('BEGIN IMMEDIATE')
+      const reopened = createStore(dbPath)
+      try {
+        expect(reopened.countByBackend(A)).toBe(2)
+        db.exec('ROLLBACK')
+        reopened.insertLogs(A, [makeLog()])
+        expect(reopened.count()).toBe(3)
+        expect(
+          reopened.aggregate(A, {
+            start: 0,
+            end: 100000,
+            groupBy: 'time',
+            bucketMs: 100000,
+          }),
+        ).toEqual([{ label: 0, upload: 300, download: 600, count: 3 }])
+        const reader = new DatabaseSync(dbPath, { readOnly: true })
+        try {
+          const query = {
+            start: 0,
+            end: 100000,
+            groupBy: 'time' as const,
+            bucketMs: 100000,
+          }
+          expect(aggregateLogs(reader, A, query)).toEqual([
+            { label: 0, upload: 300, download: 600, count: 3 },
+          ])
+          expect(
+            aggregateLogs(reader, A, {
+              ...query,
+              filters: { host: 'example.com' },
+            }),
+          ).toEqual([{ label: 0, upload: 300, download: 600, count: 3 }])
+          expect(
+            aggregateLogs(reader, A, { ...query, groupBy: 'host' }),
+          ).toEqual([
+            { label: 'example.com', upload: 300, download: 600, count: 3 },
+          ])
+        } finally {
+          reader.close()
+        }
+      } finally {
+        reopened.close()
+      }
+    } finally {
+      db.close()
       rmSync(dir, { recursive: true, force: true })
     }
   })

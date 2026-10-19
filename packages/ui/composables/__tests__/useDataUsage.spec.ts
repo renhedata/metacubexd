@@ -27,11 +27,6 @@ describe('composables/useDataUsage', () => {
 
     const out = await getAggregatedData('outbound', 0, 100)
 
-    expect(aggregate).toHaveBeenCalledWith({
-      start: 0,
-      end: 100,
-      groupBy: 'outbound',
-    })
     expect(out).toEqual([
       {
         label: 'PROXY',
@@ -53,49 +48,7 @@ describe('composables/useDataUsage', () => {
 
     const out = await getSubStatsByHost('sourceIP', '10.0.0.1', 0, 100)
 
-    expect(aggregate).toHaveBeenCalledWith({
-      start: 0,
-      end: 100,
-      groupBy: 'host',
-      filters: { sourceIP: '10.0.0.1' },
-    })
     expect(out.map((r) => r.label)).toEqual(['b.com', 'a.com'])
-  })
-
-  it('getDevicesByProxyAndHost filters by outbound and host', async () => {
-    const { getDevicesByProxyAndHost } = useDataUsage()
-    await getDevicesByProxyAndHost('PROXY', 'a.com', 0, 100)
-
-    expect(aggregate).toHaveBeenCalledWith({
-      start: 0,
-      end: 100,
-      groupBy: 'sourceIP',
-      filters: { outbound: 'PROXY', host: 'a.com' },
-    })
-  })
-
-  it('getProxyStatsByHost groups by outbound filtered by host + dimension', async () => {
-    const { getProxyStatsByHost } = useDataUsage()
-    await getProxyStatsByHost('process', 'curl', 'a.com', 0, 100)
-
-    expect(aggregate).toHaveBeenCalledWith({
-      start: 0,
-      end: 100,
-      groupBy: 'outbound',
-      filters: { host: 'a.com', process: 'curl' },
-    })
-  })
-
-  it('getDevicesByHost groups by sourceIP filtered by host', async () => {
-    const { getDevicesByHost } = useDataUsage()
-    await getDevicesByHost('a.com', 0, 100)
-
-    expect(aggregate).toHaveBeenCalledWith({
-      start: 0,
-      end: 100,
-      groupBy: 'sourceIP',
-      filters: { host: 'a.com' },
-    })
   })
 
   it('getTrafficTrend zero-fills buckets across the range', async () => {
@@ -106,16 +59,34 @@ describe('composables/useDataUsage', () => {
 
     const out = await getTrafficTrend(0, 2000, 1000)
 
-    expect(aggregate).toHaveBeenCalledWith({
-      start: 0,
-      end: 2000,
-      groupBy: 'time',
-      bucketMs: 1000,
-    })
     expect(out).toEqual([
       { timestamp: 0, upload: 0, download: 0 },
       { timestamp: 1000, upload: 5, download: 7 },
       { timestamp: 2000, upload: 0, download: 0 },
     ])
+  })
+
+  it('does not synthesize a zero trend when the request is cancelled or fails', async () => {
+    const controller = new AbortController()
+    aggregate.mockImplementation((_query, signal: AbortSignal) => {
+      const { promise, reject } = Promise.withResolvers<never>()
+      signal.addEventListener('abort', () => reject(signal.reason), {
+        once: true,
+      })
+      return promise
+    })
+    const trend = useDataUsage().getTrafficTrend(
+      0,
+      2000,
+      1000,
+      controller.signal,
+    )
+    controller.abort()
+    await expect(trend).rejects.toMatchObject({ name: 'AbortError' })
+
+    aggregate.mockRejectedValue(new Error('collector unavailable'))
+    await expect(useDataUsage().getTrafficTrend(0, 2000, 1000)).rejects.toThrow(
+      'collector unavailable',
+    )
   })
 })

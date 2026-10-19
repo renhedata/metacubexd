@@ -1,5 +1,8 @@
 <script setup lang="ts">
-import type { AggregatedData } from '~/composables/useDataUsage'
+import type {
+  AggregatedData,
+  TrafficTrendPoint,
+} from '~/composables/useDataUsage'
 import type { DataUsageType } from '~/types'
 import {
   IconArrowsExchange,
@@ -30,6 +33,8 @@ const {
 const dataSource = useDataUsageSource()
 const { clearCollectorData } = dataSource
 const isCollectorReady = computed(() => dataSource.ready())
+const configStore = useConfigStore()
+const endpointStore = useEndpointStore()
 
 const reverseDns = useReverseDns()
 const formatClientLabel = (ip: string) => reverseDns.label(ip)
@@ -69,7 +74,16 @@ const customEnd = useLocalStorage(
 )
 
 const dataUsageEntries = ref<AggregatedData[]>([])
-const trendData = ref<any[]>([])
+const trendData = ref<TrafficTrendPoint[]>([])
+const hasDimensionData = ref(false)
+const hasTrendData = ref(false)
+const dimensionError = ref('')
+const trendError = ref('')
+const drilldownError = ref('')
+let mainRequest: AbortController | undefined
+let subRequest: AbortController | undefined
+let proxyRequest: AbortController | undefined
+let disposed = false
 const selectedRow = ref<string | null>(null)
 const selectedSubRow = ref<string | null>(null)
 const subStatsMap = ref<Record<string, AggregatedData[]>>({})
@@ -90,80 +104,74 @@ const getTimeRange = () => {
   }
 }
 
-const fetchData = async () => {
-  if (!isCollectorReady.value) return
-  const { startTime, endTime } = getTimeRange()
+const loadedRange = ref(getTimeRange())
+const trendRange = ref(loadedRange.value)
+const errorMessage = (error: unknown) =>
+  error instanceof Error ? error.message : String(error)
 
-  // Dynamic bucket size based on time range to prevent overly dense charts
-  const rangeMs = endTime - startTime
-  let bucketSizeMs = 60000 // 1 min default
-
-  if (rangeMs <= 3600000)
-    bucketSizeMs = 60000 // 1 min for last hour (60 points)
-  else if (rangeMs <= 86400000)
-    bucketSizeMs = 300000 // 5 min for last day (288 points)
-  else if (rangeMs <= 604800000)
-    bucketSizeMs = 3600000 // 1 hour for last week (168 points)
-  else bucketSizeMs = 86400000 // 1 day for longer periods
-
-  try {
-    const [aggregated, trend] = await Promise.all([
-      getAggregatedData(activeView.value, startTime, endTime),
-      getTrafficTrend(startTime, endTime, bucketSizeMs),
-    ])
-
-    dataUsageEntries.value = aggregated
-    trendData.value = trend
-
-    // Auto-select first row if nothing is selected
-    const sorted = sortedDataUsageEntries.value
-    if (!selectedRow.value && sorted.length > 0) {
-      handleRowClick(sorted[0]!.label)
-    } else if (selectedRow.value) {
-      await loadSubStats(selectedRow.value)
-    }
-  } catch (e) {
-    console.error('Failed to fetch traffic data', e)
-  }
+const cancelDrilldowns = () => {
+  subRequest?.abort()
+  proxyRequest?.abort()
 }
 
-watch(
-  [activeView, selectedTimeRange],
-  ([_, timeRange], [__, prevTimeRange]) => {
-    if (timeRange === -1 && prevTimeRange !== -1) {
-      const { startTime, endTime } = getTimeRange()
-      customStart.value = dayjs(startTime).format('YYYY-MM-DDTHH:mm')
-      customEnd.value = dayjs(endTime).format('YYYY-MM-DDTHH:mm')
-    }
+const fetchData = async () => {
+  if (disposed) return
+  mainRequest?.abort()
+  cancelDrilldowns()
+  selectedSubRow.value = null
+  if (!isCollectorReady.value) return
+  const request = new AbortController()
+  mainRequest = request
+  const { signal } = request
+  const view = activeView.value
+  const { startTime, endTime } = getTimeRange()
+  loadedRange.value = { startTime, endTime }
+  dimensionError.value = ''
+  trendError.value = ''
+  drilldownError.value = ''
 
-    selectedRow.value = null
-    selectedSubRow.value = null
-    subStatsMap.value = {}
-    proxyStatsMap.value = {}
-    fetchData()
-  },
-  { immediate: true },
-)
+  const rangeMs = endTime - startTime
+  const bucketSizeMs =
+    rangeMs <= 3600000
+      ? 60000
+      : rangeMs <= 86400000
+        ? 300000
+        : rangeMs <= 604800000
+          ? 3600000
+          : 86400000
 
-// When the collector becomes ready while the page is open (e.g. the user just
-// configured it in Settings), load data — the view/time-range watchers won't
-// have fired on their own.
-watch(isCollectorReady, (ready) => {
-  if (ready) fetchData()
-})
-
-// Enable window focus refetch for traffic data with throttling
-watch(
-  useWindowFocus(),
-  useThrottleFn(
-    (focused: boolean) => {
-      if (focused && selectedTimeRange.value !== -1) fetchData()
-    },
-    30000,
-    true,
-    true,
-  ),
-)
+  // Apply each result immediately; the other query can still be running.
+  await Promise.allSettled([
+    getAggregatedData(view, startTime, endTime, signal)
+      .then((aggregated) => {
+        if (signal.aborted) return
+        dataUsageEntries.value = aggregated
+        hasDimensionData.value = true
+        const sorted = sortedDataUsageEntries.value
+        if (
+          !selectedRow.value ||
+          !aggregated.some((row) => row.label === selectedRow.value)
+        ) {
+          selectedRow.value = sorted[0]?.label ?? null
+        }
+        if (selectedRow.value) void loadSubStats(selectedRow.value)
+      })
+      .catch((error: unknown) => {
+        if (!signal.aborted) dimensionError.value = errorMessage(error)
+      }),
+    getTrafficTrend(startTime, endTime, bucketSizeMs, signal)
+      .then((trend) => {
+        if (signal.aborted) return
+        trendData.value = trend
+        trendRange.value = { startTime, endTime }
+        hasTrendData.value = true
+      })
+      .catch((error: unknown) => {
+        if (!signal.aborted) trendError.value = errorMessage(error)
+      }),
+  ])
+  if (mainRequest === request) mainRequest = undefined
+}
 
 const viewOptions = computed(() => [
   { label: t('devices'), value: 'sourceIP', icon: IconDevices },
@@ -213,60 +221,123 @@ async function handleClearAll() {
 }
 
 const handleRowClick = async (label: string) => {
+  if (disposed || !isCollectorReady.value) return
   selectedRow.value = label
   selectedSubRow.value = null
   await loadSubStats(label)
 }
 
 const loadSubStats = async (label: string) => {
-  const { startTime, endTime } = getTimeRange()
-
-  if (activeView.value === 'host') {
-    subStatsMap.value[label] = await getDevicesByHost(label, startTime, endTime)
-  } else {
-    subStatsMap.value[label] = await getSubStatsByHost(
-      activeView.value as Exclude<DataUsageType, 'host'>,
-      label,
-      startTime,
-      endTime,
-    )
+  cancelDrilldowns()
+  if (disposed || !isCollectorReady.value) return
+  const request = new AbortController()
+  subRequest = request
+  const { signal } = request
+  const view = activeView.value
+  const { startTime, endTime } = loadedRange.value
+  drilldownError.value = ''
+  try {
+    const rows =
+      view === 'host'
+        ? await getDevicesByHost(label, startTime, endTime, signal)
+        : await getSubStatsByHost(view, label, startTime, endTime, signal)
+    if (!signal.aborted) subStatsMap.value[label] = rows
+  } catch (error) {
+    if (!signal.aborted) drilldownError.value = errorMessage(error)
   }
 }
 
 const handleSubRowClick = async (parentLabel: string, subLabel: string) => {
+  if (disposed || !isCollectorReady.value) return
+  proxyRequest?.abort()
   const compositeKey = `${parentLabel}:${subLabel}`
   if (selectedSubRow.value === compositeKey) {
     selectedSubRow.value = null
     return
   }
   selectedSubRow.value = compositeKey
-  const { startTime, endTime } = getTimeRange()
-
-  if (activeView.value === 'host') {
-    proxyStatsMap.value[compositeKey] = await getProxyStatsByHost(
-      'sourceIP',
-      subLabel,
-      parentLabel,
-      startTime,
-      endTime,
-    )
-  } else if (activeView.value === 'outbound') {
-    proxyStatsMap.value[compositeKey] = await getDevicesByProxyAndHost(
-      parentLabel, // Proxy
-      subLabel, // Host
-      startTime,
-      endTime,
-    )
-  } else {
-    proxyStatsMap.value[compositeKey] = await getProxyStatsByHost(
-      activeView.value as Exclude<DataUsageType, 'host' | 'outbound'>,
-      parentLabel,
-      subLabel,
-      startTime,
-      endTime,
-    )
+  const request = new AbortController()
+  proxyRequest = request
+  const { signal } = request
+  const view = activeView.value
+  const { startTime, endTime } = loadedRange.value
+  drilldownError.value = ''
+  try {
+    const rows =
+      view === 'host'
+        ? await getProxyStatsByHost(
+            'sourceIP',
+            subLabel,
+            parentLabel,
+            startTime,
+            endTime,
+            signal,
+          )
+        : view === 'outbound'
+          ? await getDevicesByProxyAndHost(
+              parentLabel,
+              subLabel,
+              startTime,
+              endTime,
+              signal,
+            )
+          : await getProxyStatsByHost(
+              view,
+              parentLabel,
+              subLabel,
+              startTime,
+              endTime,
+              signal,
+            )
+    if (!signal.aborted) proxyStatsMap.value[compositeKey] = rows
+  } catch (error) {
+    if (!signal.aborted) drilldownError.value = errorMessage(error)
   }
 }
+
+watch(
+  () => [
+    activeView.value,
+    selectedTimeRange.value,
+    selectedTimeRange.value === -1 ? customStart.value : '',
+    selectedTimeRange.value === -1 ? customEnd.value : '',
+    isCollectorReady.value,
+    configStore.collectorURL,
+    configStore.collectorToken,
+    endpointStore.currentEndpoint?.url,
+  ],
+  () => {
+    selectedRow.value = null
+    selectedSubRow.value = null
+    subStatsMap.value = {}
+    proxyStatsMap.value = {}
+    dataUsageEntries.value = []
+    trendData.value = []
+    hasDimensionData.value = false
+    hasTrendData.value = false
+    void fetchData()
+  },
+  { immediate: true, flush: 'sync' },
+)
+
+watch(
+  useWindowFocus(),
+  useThrottleFn(
+    (focused: boolean) => {
+      if (focused && selectedTimeRange.value !== -1 && !mainRequest)
+        void fetchData()
+    },
+    30000,
+    true,
+    true,
+  ),
+)
+
+onBeforeUnmount(() => {
+  disposed = true
+  mainRequest?.abort()
+  cancelDrilldowns()
+})
 
 const currentViewLabel = computed(
   () =>
@@ -310,14 +381,12 @@ const currentViewLabel = computed(
               v-model="customStart"
               type="datetime-local"
               class="rounded-lg border border-[color-mix(in_oklab,var(--color-base-content)_12%,transparent)] bg-base-200/60 px-2 py-1.5 text-[0.75rem] text-base-content focus:border-primary focus:outline-none"
-              @change="fetchData"
             />
             <span class="text-[10px] opacity-30">→</span>
             <input
               v-model="customEnd"
               type="datetime-local"
               class="rounded-lg border border-[color-mix(in_oklab,var(--color-base-content)_12%,transparent)] bg-base-200/60 px-2 py-1.5 text-[0.75rem] text-base-content focus:border-primary focus:outline-none"
-              @change="fetchData"
             />
           </div>
 
@@ -362,7 +431,10 @@ const currentViewLabel = computed(
       <div class="min-h-0 flex-1 overflow-y-auto pr-1">
         <div class="flex flex-col gap-4">
           <!-- Summary Cards -->
-          <div class="grid shrink-0 grid-cols-2 gap-3 xl:grid-cols-4">
+          <div
+            v-if="hasDimensionData"
+            class="grid shrink-0 grid-cols-2 gap-3 xl:grid-cols-4"
+          >
             <div
               class="animate-fade-slide-in flex h-16 items-center gap-3 rounded-2xl border border-[color-mix(in_oklab,var(--color-base-content)_10%,transparent)] bg-base-200/50 p-3 shadow-sm [animation-delay:50ms] xl:h-20"
             >
@@ -457,7 +529,16 @@ const currentViewLabel = computed(
             <div
               class="animate-fade-slide-in col-span-1 min-h-[300px] w-full overflow-hidden rounded-xl border border-[color-mix(in_oklab,var(--color-base-content)_10%,transparent)] bg-base-200 p-4 shadow-sm transition-all duration-200 [animation-delay:250ms] hover:border-[color-mix(in_oklab,var(--color-base-content)_20%,transparent)] xl:h-full"
             >
+              <p v-if="dimensionError" role="alert" class="text-error">
+                {{ t('error') }}: {{ dimensionError }}
+              </p>
+              <span
+                v-if="!hasDimensionData && !dimensionError"
+                class="loading loading-spinner"
+                :aria-label="t('dataUsage')"
+              />
               <TrafficRankings
+                v-if="hasDimensionData"
                 :title="t('topProxies').slice(0, 2) + currentViewLabel"
                 :icon="currentViewOption?.icon"
                 :data="sortedDataUsageEntries"
@@ -471,10 +552,19 @@ const currentViewLabel = computed(
             <div
               class="animate-fade-slide-in col-span-1 min-h-[320px] min-w-0 overflow-hidden rounded-xl border border-[color-mix(in_oklab,var(--color-base-content)_10%,transparent)] bg-base-200 p-2 shadow-sm transition-all duration-200 [animation-delay:300ms] hover:border-[color-mix(in_oklab,var(--color-base-content)_20%,transparent)] xl:col-span-3 xl:h-full"
             >
+              <p v-if="trendError" role="alert" class="text-error">
+                {{ t('error') }}: {{ trendError }}
+              </p>
+              <span
+                v-if="!hasTrendData && !trendError"
+                class="loading loading-spinner"
+                :aria-label="t('traffic')"
+              />
               <TrafficTrendChart
+                v-if="hasTrendData"
                 :data="trendData"
-                :start-time="getTimeRange().startTime"
-                :end-time="getTimeRange().endTime"
+                :start-time="trendRange.startTime"
+                :end-time="trendRange.endTime"
                 :title="t('traffic')"
               />
             </div>
@@ -482,6 +572,9 @@ const currentViewLabel = computed(
 
           <!-- Row 3: Full-width Detail Table -->
           <div class="animate-fade-slide-in [animation-delay:350ms]">
+            <p v-if="drilldownError" role="alert" class="text-error">
+              {{ t('error') }}: {{ drilldownError }}
+            </p>
             <TrafficDetailsTable
               v-if="selectedRow"
               :selected-row="selectedRow"

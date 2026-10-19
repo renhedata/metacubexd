@@ -19,7 +19,7 @@ RUN pnpm install
 # Dashboard: nuxt build (SSR/node-server preset) -> packages/ui/.output, which
 # contains .output/server/index.mjs that the entrypoint runs.
 RUN pnpm --filter @metacubexd/ui build
-# Bundle the zero-dependency collector daemon into a single .mjs (plain node).
+# Bundle the zero-dependency collector daemon and its SQLite read worker.
 RUN pnpm build:collector
 
 FROM docker.io/node:alpine

@@ -1,10 +1,15 @@
 import type { Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
+import type { AggregateReader } from '../aggregate'
 import type { BackendManager } from '../backends'
 import type { MihomoClientOptions } from '../mihomo'
 import type { Store } from '../store'
 import type { DataUsageLog } from '../types'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { createAggregateReader } from '../aggregate'
 import { createBackendManager } from '../backends'
 import { createServer } from '../server'
 import { createStore } from '../store'
@@ -27,18 +32,24 @@ const makeLog = (over: Partial<DataUsageLog> = {}): DataUsageLog => ({
 
 describe('collector/server', () => {
   let store: Store
+  let aggregates: AggregateReader
+  let dir: string
   let manager: BackendManager
   let server: Server
   let base: string
 
   beforeEach(async () => {
-    store = createStore(':memory:')
+    dir = mkdtempSync(join(tmpdir(), 'collector-server-'))
+    const dbPath = join(dir, 'traffic.sqlite')
+    store = createStore(dbPath)
+    aggregates = createAggregateReader(dbPath)
     manager = createBackendManager({
       store,
       connect: (_opts: MihomoClientOptions) => ({ close: () => {} }),
     })
     server = createServer({
       store,
+      aggregates,
       manager,
       token: TOKEN,
       allowedOrigin: '*',
@@ -51,7 +62,9 @@ describe('collector/server', () => {
 
   afterEach(async () => {
     await new Promise<void>((resolve) => server.close(() => resolve()))
+    aggregates.close()
     store.close()
+    rmSync(dir, { recursive: true, force: true })
   })
 
   it('serves /api/health without auth', async () => {

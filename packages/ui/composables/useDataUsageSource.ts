@@ -4,7 +4,10 @@ import { z } from 'zod'
 import { normalizeBackend } from '~/utils/collector'
 
 export interface DataUsageSource {
-  aggregate: (query: AggregateQuery) => Promise<AggregateRow[]>
+  aggregate: (
+    query: AggregateQuery,
+    signal?: AbortSignal,
+  ) => Promise<AggregateRow[]>
   clearCollectorData: () => Promise<void>
   configureCollector: () => Promise<void>
   ready: () => boolean
@@ -55,7 +58,10 @@ export function useDataUsageSource(): DataUsageSource {
     collectorBase() !== '' &&
     currentBackend() !== ''
 
-  const aggregate = async (query: AggregateQuery): Promise<AggregateRow[]> => {
+  const aggregate = async (
+    query: AggregateQuery,
+    signal?: AbortSignal,
+  ): Promise<AggregateRow[]> => {
     if (!ready()) return []
 
     const params = new URLSearchParams()
@@ -70,6 +76,7 @@ export function useDataUsageSource(): DataUsageSource {
 
     const res = await fetch(`${collectorBase()}/api/aggregate?${params}`, {
       headers: authHeaders(),
+      ...(signal ? { signal } : {}),
     })
     if (!res.ok) {
       throw new Error(`Collector request failed with status ${res.status}`)

@@ -511,6 +511,30 @@ The container's health endpoint is `GET /api/control/health` on
 are up; it does **not** assert the kernel is running (check the kernel panel
 for that).
 
+### Large traffic histories (standalone collector)
+
+Rebuild and restart the **collector**, not only the dashboard, for aggregation
+performance fixes: `pnpm build:collector`, then run
+`COLLECTOR_TOKEN=... DB_PATH=/path/to/traffic.sqlite node dist/collector/index.mjs`.
+Deploy the entire `dist/collector/` directory, including `aggregate.worker.mjs`;
+the root Docker image copies both automatically. Node 22 versions that still
+gate SQLite require `--experimental-sqlite`.
+
+On the first start after upgrading, the collector creates a timestamp index
+and backfills per-backend, exact-timestamp traffic totals in one transaction.
+Large existing databases take longer to start and require additional disk
+space; back up the database before upgrading. Existing logs remain intact.
+Subsequent starts reuse the totals. Inserts and deletions keep totals in sync,
+including retention cleanup. SQLite uses WAL, so keep the database on a local
+writable volume and include its WAL when taking live backups.
+
+Unfiltered trend queries read these compact totals; filtered trends and
+dimension queries still scan matching detail rows. Two read-only workers keep
+trend and dimension queries independent without blocking the HTTP event loop.
+Disconnected requests cancel queued/running queries; overload returns HTTP 503
+rather than accumulating an unbounded queue. The dashboard displays each
+result as it arrives and cancels obsolete loads when the selection changes.
+
 ## 🛠️ Development
 
 This repository is a **pnpm 10 monorepo**:

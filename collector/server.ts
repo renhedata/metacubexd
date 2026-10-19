@@ -1,10 +1,12 @@
 import type { IncomingMessage, Server, ServerResponse } from 'node:http'
+import type { AggregateReader } from './aggregate'
 import type { BackendManager } from './backends'
 import type { Store } from './store'
 import type { Dimension, GroupBy } from './types'
 import { Buffer } from 'node:buffer'
 import { timingSafeEqual } from 'node:crypto'
 import { createServer as createHttpServer } from 'node:http'
+import { AggregateBusyError } from './aggregate'
 import { normalizeBackend } from './backends'
 import { DIMENSIONS } from './types'
 
@@ -12,6 +14,7 @@ const MAX_BODY_BYTES = 64 * 1024
 
 export interface ServerOptions {
   store: Store
+  aggregates: AggregateReader
   manager: BackendManager
   token: string
   allowedOrigin: string
@@ -19,7 +22,7 @@ export interface ServerOptions {
 }
 
 export function createServer(opts: ServerOptions): Server {
-  const { store, manager, token, allowedOrigin, startedAt } = opts
+  const { store, aggregates, manager, token, allowedOrigin, startedAt } = opts
 
   const setCors = (res: ServerResponse): void => {
     res.setHeader('Access-Control-Allow-Origin', allowedOrigin)
@@ -182,17 +185,19 @@ export function createServer(opts: ServerOptions): Server {
           if (v !== null) filters[dim] = v
         }
 
-        json(
-          res,
-          200,
-          store.aggregate(backend, {
-            start,
-            end,
-            groupBy: groupBy as GroupBy,
-            filters,
-            bucketMs,
-          }),
-        )
+        const controller = new AbortController()
+        const abort = () => controller.abort()
+        res.once('close', abort)
+        try {
+          const rows = await aggregates.aggregate(
+            backend,
+            { start, end, groupBy: groupBy as GroupBy, filters, bucketMs },
+            controller.signal,
+          )
+          if (!res.destroyed) json(res, 200, rows)
+        } finally {
+          res.removeListener('close', abort)
+        }
         return
       }
 
@@ -224,8 +229,13 @@ export function createServer(opts: ServerOptions): Server {
       }
 
       json(res, 404, { error: 'not found' })
-    } catch {
-      json(res, 500, { error: 'internal error' })
+    } catch (error) {
+      if (res.destroyed) return
+      if (error instanceof AggregateBusyError) {
+        json(res, 503, { error: 'too many aggregate requests' })
+      } else {
+        json(res, 500, { error: 'internal error' })
+      }
     }
   })
 }

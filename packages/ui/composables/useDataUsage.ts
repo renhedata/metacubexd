@@ -12,6 +12,12 @@ export interface AggregatedData {
   kind: DataUsageType
 }
 
+export interface TrafficTrendPoint {
+  timestamp: number
+  upload: number
+  download: number
+}
+
 const toAggregated = (
   rows: AggregateRow[],
   kind: DataUsageType,
@@ -34,9 +40,13 @@ export const useDataUsage = () => {
     type: DataUsageType,
     startTime: number,
     endTime: number,
+    signal?: AbortSignal,
   ): Promise<AggregatedData[]> =>
     toAggregated(
-      await source.aggregate({ start: startTime, end: endTime, groupBy: type }),
+      await source.aggregate(
+        { start: startTime, end: endTime, groupBy: type },
+        signal,
+      ),
       type,
     )
 
@@ -45,14 +55,18 @@ export const useDataUsage = () => {
     label: string,
     startTime: number,
     endTime: number,
+    signal?: AbortSignal,
   ): Promise<AggregatedData[]> =>
     toAggregated(
-      await source.aggregate({
-        start: startTime,
-        end: endTime,
-        groupBy: 'host',
-        filters: { [dimension]: label },
-      }),
+      await source.aggregate(
+        {
+          start: startTime,
+          end: endTime,
+          groupBy: 'host',
+          filters: { [dimension]: label },
+        },
+        signal,
+      ),
       'host',
     ).sort(byTotalDesc)
 
@@ -62,14 +76,18 @@ export const useDataUsage = () => {
     host: string,
     startTime: number,
     endTime: number,
+    signal?: AbortSignal,
   ): Promise<AggregatedData[]> =>
     toAggregated(
-      await source.aggregate({
-        start: startTime,
-        end: endTime,
-        groupBy: 'outbound',
-        filters: { host, [dimension]: parentLabel },
-      }),
+      await source.aggregate(
+        {
+          start: startTime,
+          end: endTime,
+          groupBy: 'outbound',
+          filters: { host, [dimension]: parentLabel },
+        },
+        signal,
+      ),
       'outbound',
     ).sort(byTotalDesc)
 
@@ -77,14 +95,18 @@ export const useDataUsage = () => {
     host: string,
     startTime: number,
     endTime: number,
+    signal?: AbortSignal,
   ): Promise<AggregatedData[]> =>
     toAggregated(
-      await source.aggregate({
-        start: startTime,
-        end: endTime,
-        groupBy: 'sourceIP',
-        filters: { host },
-      }),
+      await source.aggregate(
+        {
+          start: startTime,
+          end: endTime,
+          groupBy: 'sourceIP',
+          filters: { host },
+        },
+        signal,
+      ),
       'sourceIP',
     ).sort(byTotalDesc)
 
@@ -93,14 +115,18 @@ export const useDataUsage = () => {
     host: string,
     startTime: number,
     endTime: number,
+    signal?: AbortSignal,
   ): Promise<AggregatedData[]> =>
     toAggregated(
-      await source.aggregate({
-        start: startTime,
-        end: endTime,
-        groupBy: 'sourceIP',
-        filters: { outbound: proxy, host },
-      }),
+      await source.aggregate(
+        {
+          start: startTime,
+          end: endTime,
+          groupBy: 'sourceIP',
+          filters: { outbound: proxy, host },
+        },
+        signal,
+      ),
       'sourceIP',
     ).sort(byTotalDesc)
 
@@ -108,13 +134,17 @@ export const useDataUsage = () => {
     startTime: number,
     endTime: number,
     bucketSizeMs: number,
-  ): Promise<{ timestamp: number; upload: number; download: number }[]> => {
-    const rows = await source.aggregate({
-      start: startTime,
-      end: endTime,
-      groupBy: 'time',
-      bucketMs: bucketSizeMs,
-    })
+    signal?: AbortSignal,
+  ): Promise<TrafficTrendPoint[]> => {
+    const rows = await source.aggregate(
+      {
+        start: startTime,
+        end: endTime,
+        groupBy: 'time',
+        bucketMs: bucketSizeMs,
+      },
+      signal,
+    )
 
     const buckets = new Map<number, { upload: number; download: number }>()
     for (let t = startTime; t <= endTime; t += bucketSizeMs) {
